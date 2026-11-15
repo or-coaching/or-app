@@ -28,7 +28,7 @@ function seed() {
     exercises: [], workouts: [], workout_items: [], set_logs: [], activities: [], body_metrics: [],
     food_logs: [], custom_foods: [], messages: [], challenge_completions: [], checkins: [],
   };
-  const ex = (name, muscle_group, equipment, cues, instructions) => { const e = { id: uid(), trainer_id: TRAINER, name, muscle_group, equipment, cues, instructions, video_path: null, created_at: at(-60) }; db.exercises.push(e); return e; };
+  const ex = (name, muscle_group, equipment, cues, instructions) => { const e = { id: uid(), trainer_id: TRAINER, name, muscle_group, equipment, cues, instructions, video_path: null, categories: [], created_at: at(-60) }; db.exercises.push(e); return e; };
   const squat = ex("Goblet squat", "Legs", ["Kettlebell"], ["Chest up, elbows inside knees", "Sit between your heels", "Drive through the middle of your foot", "Breathe out as you stand"], "Hold the bell at your chest. Feet just wider than hips, toes slightly out.");
   const rdl = ex("Dumbbell Romanian deadlift", "Glutes", ["Dumbbells"], ["Soft knees, push your hips back", "Keep the weights close to your legs", "Flat back, chest proud", "Squeeze your glutes to stand"], "Hinge at the hips until you feel your hamstrings stretch.");
   const lunge = ex("Reverse lunge", "Legs", [], ["Step back long enough for two right angles", "Front knee tracks over your toes", "Push through the front heel"], "Alternate legs, or finish one side first.");
@@ -43,6 +43,12 @@ function seed() {
   ex("World's greatest stretch", "Mobility", ["Yoga mat"], ["Long lunge, elbow to instep", "Rotate and reach to the ceiling", "Breathe into each position"], "Five slow reps a side.").reward_streak = 7;
   ex("Band pull-apart", "Shoulders", ["Resistance bands"], ["Arms straight, shoulders down", "Squeeze between your shoulder blades"], "Hold the band at shoulder height.");
   ex("Bulgarian split squat", "Legs", ["Bench", "Dumbbells"], ["Most weight on the front leg", "Drop straight down", "Tall torso"], "Back foot on a bench.").reward_streak = 30;
+
+  const tag = (n, cats) => { const e = db.exercises.find((x) => x.name === n); if (e) e.categories = cats; };
+  tag("World's greatest stretch", ["Warm-up", "Mobility"]); tag("Band pull-apart", ["Warm-up"]); tag("Deadbug", ["Warm-up", "Chill set"]);
+  tag("Goblet squat", ["Main set"]); tag("Dumbbell Romanian deadlift", ["Main set"]); tag("Single-arm dumbbell row", ["Main set"]);
+  tag("Kettlebell swing", ["Finisher"]); tag("Skater hops", ["Finisher"]); tag("Banded glute bridge", ["Chill set", "Glute focus"]);
+  tag("Reverse lunge", ["Glute focus"]); tag("Plank shoulder taps", ["Chill set"]); tag("Bulgarian split squat", ["Glute focus"]);
 
   // Past sessions: progressive weights, so personal bests show up.
   const pastPlans = [

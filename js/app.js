@@ -18,6 +18,13 @@ const EQUIPMENT = [
   "Skipping rope", "Treadmill", "Bike",
 ];
 const MUSCLES = ["Legs", "Glutes", "Chest", "Back", "Shoulders", "Arms", "Core", "Full body", "Cardio", "Mobility"];
+// Exercise types (sections). The coach can add her own as well; see the exercise editor.
+const TYPES = CONFIG.EXERCISE_TYPES || ["Warm-up", "Main set", "Cool-down", "Chill set", "Mobility", "Stretch", "Finisher"];
+const typesOf = (x) => x.categories || [];
+function typeOrder(list) {
+  const present = [...new Set(list.flatMap(typesOf))];
+  return [...TYPES.filter((t) => present.includes(t)), ...present.filter((t) => !TYPES.includes(t)).sort()];
+}
 const ACTIVITY_TYPES = ["Walk", "Run", "Cycle", "Swim", "Class", "Sport", "Hike", "Yoga", "Other"];
 // Simple, safe fallbacks when the library has no direct match
 const SWAP_HINTS = {
@@ -542,7 +549,7 @@ async function rouletteView() {
   }
   const best = eng.stats.streak.best;
   const pool = (data || []).filter((x) => x.reward_streak == null || best >= x.reward_streak);
-  const groups = [...new Set(pool.map((x) => x.muscle_group))];
+  const groups = [...typeOrder(pool), ...new Set(pool.map((x) => x.muscle_group))];
   render(`<button class="back" onclick="history.back()">Back</button>
     <h1>Exercise roulette</h1><p class="muted">In the mood for something new? Spin for a move from your coach's library.</p>
     <div class="chips" id="rf">${["Anything", "Fits my kit", ...groups].map((m, i) => `<a href="#" class="${i ? "" : "pass"}" data-m="${esc(m)}">${esc(m)}</a>`).join("")}</div>
@@ -556,7 +563,7 @@ async function rouletteView() {
   show(["", "Ready when you are", ""]);
   $$("#rf a").forEach((c) => (c.onclick = (e) => { e.preventDefault(); $$("#rf a").forEach((x) => x.classList.remove("pass")); c.classList.add("pass"); filter = c.dataset.m; }));
   $("#spin").onclick = () => {
-    const opts = pool.filter((x) => filter === "Anything" || (filter === "Fits my kit" ? !missingEquipment(x, me.equipment).length : x.muscle_group === filter));
+    const opts = pool.filter((x) => filter === "Anything" || (filter === "Fits my kit" ? !missingEquipment(x, me.equipment).length : typesOf(x).includes(filter) || x.muscle_group === filter));
     if (!opts.length) return toast("Nothing matches that filter yet. Try Anything.");
     const pick = opts[Math.floor(Math.random() * opts.length)];
     const filler = Array.from({ length: 28 }, () => opts[Math.floor(Math.random() * opts.length)].name);
@@ -682,7 +689,7 @@ async function workoutView(id) {
         <button class="${d ? "" : "secondary"} small" title="Log set" aria-label="${d ? "Logged" : "Log set"}">${d ? ICON.check : "Log"}</button></div>`;
     }).join("");
     return `<div class="card ex-card">
-      <div class="row between"><h2>${esc(ex.name)}</h2><span class="chip">${esc(ex.muscle_group)}</span></div>
+      <div class="row between"><h2>${esc(ex.name)}</h2><span>${typesOf(ex).slice(0, 1).map((t) => `<span class="chip on">${esc(t)}</span>`).join("")}<span class="chip">${esc(ex.muscle_group)}</span></span></div>
       ${url ? `<video src="${esc(url)}" controls playsinline preload="metadata" loop muted></video>` : ""}
       <div class="target">Coach's target: <b>${esc(targetText(it))}</b>${it.notes ? `<div class="muted">${esc(it.notes)}</div>` : ""}
         ${last ? `<div class="muted">Last time: ${last.reps ?? last.seconds + "s"}${last.weight_kg ? " @ " + last.weight_kg + " kg" : ""}</div>` : ""}</div>
@@ -759,20 +766,30 @@ async function clientLibrary() {
       ${all.length ? `<div class="sec"><h2>In your workouts</h2></div><div class="tiles">${all.map((x) => tileHtml(x, urls, `#/ex/${x.id}`)).join("")}</div>` : ""}`);
     return;
   }
+  const types = typeOrder(all);
+  const muscles = MUSCLES.filter((m) => all.some((x) => x.muscle_group === m));
   render(`<h1>Library</h1><p class="muted">Demos and form cues from your coach, for extra sessions or a refresher.</p>
     ${bonusHtml}
+    ${types.map((t) => { const items = all.filter((x) => typesOf(x).includes(t)); return `<div class="sec"><h2>${esc(t)}</h2><a href="#" data-jump="${esc(t)}">See all ${items.length}</a></div>
+      <div class="shelf">${items.map((x) => tileHtml(x, urls, `#/ex/${x.id}`)).join("")}</div>`; }).join("")}
+    <div class="sec" id="allSec"><h2>All exercises</h2></div>
     <input id="q" placeholder="Search exercises" style="margin-bottom:10px" aria-label="Search exercises">
-    <div class="chips" id="mg">${["All", "Fits my kit", ...MUSCLES].map((m, i) => `<a href="#" class="${i ? "" : "pass"}" data-m="${m}">${m}</a>`).join("")}</div>
+    <div class="chips" id="mg">${["All", "Fits my kit", ...types, ...muscles].map((m, i) => `<a href="#" class="${i ? "" : "pass"}" data-m="${esc(m)}">${esc(m)}</a>`).join("")}</div>
     <div class="tiles" id="list"></div>`);
   let mg = "All";
+  const match = (x) => mg === "All" || (mg === "Fits my kit" ? !missingEquipment(x, me.equipment).length : typesOf(x).includes(mg) || x.muscle_group === mg);
   const draw = () => {
     const q = $("#q").value.toLowerCase();
-    const rows = all.filter((x) => (mg === "All" || (mg === "Fits my kit" ? !missingEquipment(x, me.equipment).length : x.muscle_group === mg)) && x.name.toLowerCase().includes(q));
+    const rows = all.filter((x) => match(x) && x.name.toLowerCase().includes(q));
     $("#list").innerHTML = rows.map((x) => tileHtml(x, urls, `#/ex/${x.id}`)).join("")
       || `<div class="empty" style="grid-column:1/-1">${all.length ? "No exercises match. Try another filter." : "Your coach hasn't added exercises yet."}</div>`;
   };
   $("#q").oninput = draw;
   $$("#mg a").forEach((c) => (c.onclick = (e) => { e.preventDefault(); $$("#mg a").forEach((x) => x.classList.remove("pass")); c.classList.add("pass"); mg = c.dataset.m; draw(); }));
+  $$("[data-jump]").forEach((a) => (a.onclick = (e) => {
+    e.preventDefault(); const chip = $$("#mg a").find((c) => c.dataset.m === a.dataset.jump); chip?.click();
+    $("#allSec").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  }));
   draw();
 }
 
@@ -1224,7 +1241,7 @@ async function trainerLibrary() {
     const rows = all.filter((x) => (mg === "All" || x.muscle_group === mg) && x.name.toLowerCase().includes(q));
     $("#list").innerHTML = rows.map((x) => `<a class="list-item" href="#/exercise/${x.id}"><div class="grow"><b>${esc(x.name)}</b>
       <div class="muted">${esc(x.muscle_group)}, ${(x.equipment || []).map(esc).join(", ") || "Bodyweight"}</div></div>
-      ${x.reward_streak ? `<span class="chip good">Bonus ${x.reward_streak}d</span>` : ""} ${x.video_path ? "Video" : `<span class="chip warn">No video</span>`} ${x.cues?.length ? "" : `<span class="chip warn">No cues</span>`}</a>`).join("")
+      ${typesOf(x).slice(0, 2).map((t) => `<span class="chip">${esc(t)}</span>`).join("")}${x.reward_streak ? `<span class="chip good">Bonus ${x.reward_streak}d</span>` : ""} ${x.video_path ? "Video" : `<span class="chip warn">No video</span>`} ${x.cues?.length ? "" : `<span class="chip warn">No cues</span>`}</a>`).join("")
       || `<div class="empty">${all.length ? "No matches." : "Start your library — add your first exercise."}</div>`;
   };
   $("#q").oninput = draw;
@@ -1234,9 +1251,11 @@ async function trainerLibrary() {
 
 async function exerciseEditor(id) {
   const isNew = id === "new";
-  const ex = isNew ? { name: "", muscle_group: "Full body", equipment: [], cues: [], instructions: "" }
+  const ex = isNew ? { name: "", muscle_group: "Full body", equipment: [], cues: [], instructions: "", categories: [] }
     : (await sb.from("exercises").select("*").eq("id", id).single()).data;
   if (!ex) return render(`<div class="empty">Exercise not found.</div>`);
+  const { data: allTypes } = await sb.from("exercises").select("categories").eq("trainer_id", me.id);
+  const customTypes = [...new Set((allTypes || []).flatMap(typesOf))].filter((t) => !TYPES.includes(t)).sort();
   const url = await videoUrl(ex.video_path);
   render(`<button class="back" onclick="location.hash='#/library'">← Library</button>
     <h1>${isNew ? "New exercise" : esc(ex.name)}</h1>
@@ -1245,6 +1264,9 @@ async function exerciseEditor(id) {
       <label>Muscle group</label><select name="mg">${MUSCLES.map((m) => `<option ${m === ex.muscle_group ? "selected" : ""}>${m}</option>`).join("")}</select>
       <label>Equipment needed <span class="muted">(none = bodyweight)</span></label>
       <div id="eq">${EQUIPMENT.filter((e) => e !== "Full gym").map((e) => `<span class="chip ${ex.equipment.includes(e) ? "on" : ""}" data-e="${esc(e)}" role="button">${esc(e)}</span>`).join("")}</div>
+      <label>Type <span class="muted">(pick any that fit)</span></label>
+      <div id="ty">${[...new Set([...TYPES, ...customTypes, ...typesOf(ex)])].map((t) => `<span class="chip ${typesOf(ex).includes(t) ? "on" : ""}" data-t="${esc(t)}" role="button">${esc(t)}</span>`).join("")}</div>
+      <div class="row" style="margin-top:8px"><input id="tyNew" maxlength="30" placeholder="Add your own, e.g. Glute focus" aria-label="New type"><button type="button" class="small secondary" id="tyAdd">Add</button></div>
       <label for="rw">Bonus video for streaks</label>
       <select name="rw" id="rw">${[["", "No, part of the normal library"], ["7", "Unlocks at a 7-day streak"], ["14", "Unlocks at a 14-day streak"], ["30", "Unlocks at a 30-day streak"]]
         .map(([v, l]) => `<option value="${v}" ${String(ex.reward_streak ?? "") === v ? "selected" : ""}>${l}</option>`).join("")}</select>
@@ -1261,7 +1283,18 @@ async function exerciseEditor(id) {
       <button class="block" style="margin-top:12px" id="save">Save to library</button>
       ${isNew ? "" : `<button type="button" class="block danger" style="margin-top:8px" id="del">Delete exercise</button>`}
     </form>`);
-  $$("#eq .chip").forEach((c) => (c.onclick = () => c.classList.toggle("on")));
+  $$("#eq .chip, #ty .chip").forEach((c) => (c.onclick = () => c.classList.toggle("on")));
+  $("#tyAdd").onclick = () => {
+    const v = $("#tyNew").value.trim().replace(/\s+/g, " "); if (!v) return;
+    const name = v[0].toUpperCase() + v.slice(1);
+    const existing = $$("#ty .chip").find((c) => c.dataset.t.toLowerCase() === name.toLowerCase());
+    if (existing) { existing.classList.add("on"); } else {
+      $("#ty").insertAdjacentHTML("beforeend", `<span class="chip on" data-t="${esc(name)}" role="button">${esc(name)}</span>`);
+      const chip = $("#ty").lastElementChild; chip.onclick = () => chip.classList.toggle("on");
+    }
+    $("#tyNew").value = "";
+  };
+  $("#tyNew").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("#tyAdd").click(); } });
   $("#ai").onclick = async () => {
     const f = $("#ef"); if (!f.name.value) return toast("Add the exercise name first");
     const b = $("#ai"); b.disabled = true; b.textContent = "Thinking…";
@@ -1294,7 +1327,7 @@ async function exerciseEditor(id) {
     }
     const row = { trainer_id: me.id, name: f.name.value.trim(), muscle_group: f.mg.value, equipment: $$("#eq .chip.on").map((c) => c.dataset.e),
       instructions: f.ins.value || null, cues: f.cues.value.split("\n").map((s) => s.trim()).filter(Boolean), video_path,
-      reward_streak: f.rw.value ? Number(f.rw.value) : null };
+      reward_streak: f.rw.value ? Number(f.rw.value) : null, categories: $$("#ty .chip.on").map((c) => c.dataset.t) };
     const { error } = isNew ? await sb.from("exercises").insert(row) : await sb.from("exercises").update(row).eq("id", id);
     btn.disabled = false; btn.textContent = "Save to library";
     if (!fail(error)) { toast("Saved to library"); go("library"); }

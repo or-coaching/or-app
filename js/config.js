@@ -31,6 +31,9 @@ export const CONFIG = {
   // Optional booking calendar (Calendly, Setmore, Google booking page)
   BOOKING_URL: "",
 
+  // Exercise types shown as sections in the Library. Tanya can also add her own in the app.
+  EXERCISE_TYPES: ["Warm-up", "Main set", "Cool-down", "Chill set", "Mobility", "Stretch", "Finisher"],
+
   // Her own photos (portrait, 1200px+). Put them in the images folder.
   // Leave "" and the app uses a branded background instead.
   PHOTOS: {
