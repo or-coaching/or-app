@@ -577,3 +577,76 @@ details.qa form { margin-top: 6px; }
 .move path.m-rope { stroke: var(--text); stroke-width: 1.6; }
 .m-props .plate { fill: #79837C; }
 .move.front { --skin-far: var(--skin); --legs-far: var(--legs); --shoe-far: var(--shoe); }
+
+/* Guided workout: overview */
+.ov-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 6px 0 14px; }
+.ov-stats > div { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 12px; text-align: center; }
+.ov-stats b { display: block; font-family: var(--display); font-size: 1.5rem; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.ov-stats span { font-size: .78rem; color: var(--muted); }
+.ov-list { padding: 4px 12px; }
+.ov-item { display: flex; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); color: inherit; text-decoration: none; }
+.ov-item:last-child { border-bottom: 0; }
+.ov-item .grow { flex: 1; min-width: 0; }
+.ov-go { position: sticky; bottom: calc(96px + env(safe-area-inset-bottom)); padding-top: 8px; z-index: 5; }
+.coach-note { border-color: rgba(156, 181, 154, .35); }
+
+/* Guided workout: one exercise per screen */
+.sess { padding-bottom: 90px; }
+.sess-top { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; }
+.sess-prog { background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 14px; padding: 6px 10px; display: grid; text-align: center; font-weight: 400; }
+.sess-prog b { font-size: .95rem; } .sess-prog span { font-size: .74rem; color: var(--muted); }
+.sess-clock { font-family: var(--display); font-weight: 700; font-size: 1.25rem; font-variant-numeric: tabular-nums; min-width: 58px; text-align: right; }
+.sess-demo .move { margin: 4px 0 6px; }
+.sess-demo .move svg { max-height: 300px; }
+.sess-target { margin: 10px 0; padding: 10px 12px; border-radius: 14px; background: var(--surface-2); }
+.coach-note-inline { font-size: .88rem; color: var(--muted); margin-top: 4px; }
+.coach-note-inline::before { content: "Coach: "; color: var(--primary); }
+.card.sets { padding: 10px 12px; }
+.srow { display: grid; grid-template-columns: 24px minmax(0, 1fr) 62px 62px 46px; gap: 8px; align-items: center; margin-top: 8px; }
+.srow.head { margin-top: 0; font-size: .72rem; color: var(--muted); }
+.srow.head span:nth-child(n+3) { text-align: center; }
+.srow .sn { font-weight: 700; color: var(--muted); text-align: center; }
+.srow .sprev { font-size: .8rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.srow input { padding: 10px 4px; text-align: center; font-variant-numeric: tabular-nums; min-width: 0; }
+.srow [data-work] { order: 10; grid-column: 2 / -1; }
+.sdone { width: 46px; height: 44px; padding: 0; display: grid; place-items: center; border-radius: 12px; background: var(--bg); color: var(--muted); border: 1.5px solid var(--line); }
+.sdone svg { width: 22px; height: 22px; }
+.srow.done .sdone { background: var(--primary); color: var(--on-primary); border-color: var(--primary); }
+.srow.done input { border-color: rgba(156, 181, 154, .6); }
+.srow.queued .sdone { background: transparent; color: var(--primary); border-style: dashed; border-color: var(--primary); }
+.hist { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: .88rem; }
+.sess-nav { position: fixed; left: 12px; right: 12px; bottom: calc(14px + env(safe-area-inset-bottom)); z-index: 30; max-width: 696px; margin: 0 auto;
+  display: grid; grid-template-columns: 1fr 2fr; gap: 8px; padding: 8px; border-radius: 22px; background: rgba(32, 37, 33, .92); backdrop-filter: blur(10px); border: 1px solid var(--line); }
+.sess-nav button { padding: 14px 10px; }
+.pulse { animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 6px rgba(156, 181, 154, .25); } }
+@media (prefers-reduced-motion: reduce) { .pulse { animation: none; } }
+.sl-item { width: 100%; background: none; color: inherit; border-radius: 0; text-align: left; font-weight: 400; }
+.sl-item.cur { background: var(--surface-2); border-radius: 12px; }
+
+/* Timers */
+.timer { display: grid; grid-template-columns: 64px 1fr; gap: 6px 12px; align-items: center; padding: 12px; border-radius: 18px; background: var(--surface-2); border: 1px solid rgba(156, 181, 154, .45); margin: 10px 0; }
+.timer svg { width: 64px; height: 64px; transform: rotate(-90deg); grid-row: span 2; }
+.timer .t-bg { fill: none; stroke: var(--line); stroke-width: 7; }
+.timer .t-fg { fill: none; stroke: var(--primary); stroke-width: 7; stroke-linecap: round; transition: stroke-dashoffset .9s linear; }
+.timer.work-t .t-fg { stroke: var(--warn); }
+.timer .t-main { display: grid; }
+.timer .t-main .muted { font-size: .78rem; }
+.timer .t-n { font-family: var(--display); font-size: 2rem; line-height: 1; font-variant-numeric: tabular-nums; }
+.timer .t-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.timer.paused { opacity: .7; }
+.timer.done-t { display: block; text-align: center; background: var(--primary); color: var(--on-primary); animation: pop .4s ease; }
+.timer.done-t span { color: var(--on-primary); }
+@keyframes pop { from { transform: scale(.96); } }
+
+/* Summary and feedback */
+.sum-head { text-align: center; margin: 6px 0 8px; }
+.sum-head svg { margin: 0 auto; display: block; }
+.diff { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.diff label { margin: 0; }
+.diff input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.diff span { display: grid; place-items: center; min-height: 52px; padding: 4px; text-align: center; font-size: .74rem; line-height: 1.2; border-radius: 12px; background: var(--bg); border: 1px solid var(--line); cursor: pointer; }
+.diff input:checked + span { background: var(--primary); color: var(--on-primary); border-color: var(--primary); font-weight: 600; }
+.diff input:focus-visible + span { outline: 2px solid var(--primary); }
+.chat-lock { margin-top: 10px; border-color: rgba(156, 181, 154, .35); }
+.fb-note { margin: 0 0 8px; font-size: .84rem; font-style: italic; }

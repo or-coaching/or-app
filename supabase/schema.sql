@@ -702,3 +702,10 @@ alter table public.exercises add column if not exists level text;    -- Beginner
 alter table public.exercises add column if not exists tags text[] not null default '{}';  -- Low impact, Seated, Balance, Single side
 -- The full library is a paid extra unless the coach chooses to make it free (Settings).
 alter table public.profiles alter column library_free set default false;
+
+-- =====================================================================
+-- GUIDED WORKOUT RESULTS (how long it took, how hard it felt, client notes)
+-- =====================================================================
+alter table public.workouts add column if not exists duration_seconds int check (duration_seconds is null or duration_seconds between 0 and 86400);
+alter table public.workouts add column if not exists difficulty smallint check (difficulty is null or difficulty between 1 and 5);
+alter table public.workouts add column if not exists client_feedback text check (length(client_feedback) <= 1000);

@@ -53,6 +53,7 @@ let me = null;
 let myTrainer = null;
 let myScreen = null;   // the client's health check
 let restT = null;      // rest timer between sets
+let activeSess = null; // guided workout in progress (paused automatically when you leave it)
 // A coach can switch to "My training" and use the client side as her own client.
 let viewAs = (() => { try { return localStorage.getItem("or-view") || "coach"; } catch { return "coach"; } })();
 const isClientView = () => me?.role === "client" || (me?.role === "trainer" && viewAs === "client");
@@ -120,6 +121,11 @@ function fmtTime(d) { return new Date(d).toLocaleString("en-ZA", { day: "numeric
 const tracksEx = () => (me?.tracks || ["exercise"]).includes("exercise");
 const tracksNut = () => (me?.tracks || []).includes("nutrition");
 function weekStart(d = new Date()) { const x = new Date(d); const day = (x.getDay() + 6) % 7; x.setDate(x.getDate() - day); return x.toISOString().slice(0, 10); }
+// Messaging the coach is part of a pass or the PT plan.
+function canChat() {
+  if (me?.role === "trainer") return true;
+  return ["library", "pt"].includes(me?.plan) && (!me.access_until || me.access_until >= today());
+}
 function hasLibrary() {
   if (me?.role === "trainer") return true;
   if (myTrainer?.library_free) return true;
@@ -382,7 +388,10 @@ async function unreadCount() {
 
 async function route() {
   if (chatChannel) { sb.removeChannel(chatChannel); chatChannel = null; }
-  clearInterval(restT); $("#rest")?.remove();
+  clearInterval(restT); $("#rest")?.remove(); clearInterval(timerT);
+  if (activeSess && !location.hash.startsWith("#/session/")) {
+    const st = activeSess.st; st.elapsed = sessElapsed(st); st.runningSince = null; st.paused = true; writeSess(activeSess.id, st); activeSess = null;
+  }
   if (!session) return authView();
   if (!me) { await loadMe(); if (!me) return render(`<div class="empty">Setting up your profile… refresh in a moment.</div>`); }
 
@@ -420,7 +429,7 @@ async function route() {
   tabs([["home", "home", "Today"], ...(tracksEx() ? [["workouts", "train", "Train"]] : []), ...(tracksNut() ? [["food", "food", "Food"]] : []),
     ["library", "library", "Library"], ...(me.role === "trainer" ? [["me", "settings", "Profile"]] : [["chat", "chat", "Coach", badge]])], true);
   const views = { home: clientHome, food: () => foodView(a), log: () => logView(a), passes: passesView,
-    roulette: rouletteView, badges: badgesView, recipe: () => recipeView(a), photos: () => photosView(), water: waterView, workouts: clientWorkouts, workout: () => workoutView(a), progress: () => progressView(me.id),
+    roulette: rouletteView, badges: badgesView, recipe: () => recipeView(a), photos: () => photosView(), water: waterView, workouts: clientWorkouts, workout: () => workoutView(a), session: () => sessionView(a, b), progress: () => progressView(me.id),
     library: clientLibrary, ex: () => clientExercise(a), chat: () => chatView(me.id), me: profileView };
   return (views[page] || clientHome)();
 }
@@ -928,119 +937,273 @@ function celebratePB(name, what) {
   $("#celOk").onclick = () => $("#cel").remove();
 }
 
-async function workoutView(id) {
-  const [{ data: w, error }, logs, { data: library }] = await Promise.all([
-    sb.from("workouts").select("*, workout_items(*, exercises(*))").eq("id", id).single(),
-    loadLogs(me.id),
-    sb.from("exercises").select("id,name,muscle_group,equipment"),
-  ]);
-  if (fail(error) || !w) return render(`<div class="empty">Workout not found.</div>`);
-  const items = (w.workout_items || []).sort((a, b) => a.position - b.position);
-  const thisLogs = logs.filter((l) => items.some((i) => i.id === l.workout_item_id));
+// ---------------------------------------------------------------- guided workout session
+// Overview first, then one exercise per screen: demo, sets, rest timer, last time, next.
+const sessKey = (wid) => `or-sess-${me.id}-${wid}`;
+function readSess(wid) { try { return JSON.parse(localStorage.getItem(sessKey(wid))) || null; } catch { return null; } }
+function writeSess(wid, st) { try { localStorage.setItem(sessKey(wid), JSON.stringify(st)); } catch {} }
+function clearSess(wid) { try { localStorage.removeItem(sessKey(wid)); } catch {} }
+const sessElapsed = (st) => (st?.elapsed || 0) + (st?.runningSince ? Date.now() - st.runningSince : 0);
+const clock = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
+  return h ? `${h}:${String(m).padStart(2, "0")}:${String(x).padStart(2, "0")}` : `${m}:${String(x).padStart(2, "0")}`; };
+const setLabel = (l) => (l.seconds && !l.reps ? `${l.seconds}s` : `${l.reps ?? "–"}`) + (l.weight_kg ? ` × ${l.weight_kg} kg` : "");
+
+async function loadWorkout(id) {
+  const [{ data: w, error }, logs] = await Promise.all([sb.from("workouts").select("*, workout_items(*, exercises(*))").eq("id", id).single(), loadLogs(me.id)]);
+  if (error || !w) return null;
+  const items = (w.workout_items || []).sort((a, b) => a.position - b.position).filter((it) => it.exercises);
+  const order = SECTIONS.flatMap((sec) => items.filter((it) => sectionOf(it) === sec.key));
   const queued = readQ();
-  // Best so far per exercise, from earlier sessions, to spot personal bests as they happen.
-  const bestW = {}, bestR = {};
-  logs.filter((l) => !items.some((i) => i.id === l.workout_item_id)).forEach((l) => {
-    const e = l.workout_items?.exercise_id; if (!e) return;
-    if (l.weight_kg) bestW[e] = Math.max(bestW[e] || 0, l.weight_kg); else if (l.reps) bestR[e] = Math.max(bestR[e] || 0, l.reps);
-  });
+  const mine = [...logs.filter((l) => order.some((i) => i.id === l.workout_item_id)), ...queued.filter((q) => order.some((i) => i.id === q.workout_item_id)).map((q) => ({ ...q, id: "queued" }))];
+  // earlier sessions of each exercise, newest first: [{date, sets:[...]}]
+  const history = (exId) => {
+    const prev = logs.filter((l) => l.workout_items?.exercise_id === exId && !order.some((i) => i.id === l.workout_item_id));
+    const by = {}; prev.forEach((l) => (by[l.workout_item_id] ??= []).push(l));
+    return Object.values(by).map((sets) => ({ date: sets[0].logged_at, sets: sets.sort((a, b) => a.set_number - b.set_number) })).sort((a, b) => b.date.localeCompare(a.date));
+  };
+  const urls = await signedMap(order.map((i) => i.exercises));
+  return { w, order, logs, mine, history, urls };
+}
 
-  const cards = await Promise.all(items.map(async (it) => {
-    const ex = it.exercises; const url = await videoUrl(ex.video_path);
-    const prev = logs.filter((l) => l.workout_items?.exercise_id === ex.id && l.workout_item_id !== it.id);
-    const last = prev[prev.length - 1];
-    const done = [...thisLogs.filter((l) => l.workout_item_id === it.id), ...queued.filter((q) => q.workout_item_id === it.id).map((q) => ({ ...q, id: "queued" }))];
-    const nSets = Math.max(it.target_sets || 3, done.length);
-    const timed = !!it.target_seconds && !it.target_reps;
-    // Ready to go heavier? Every set at or above the target reps last session.
-    const lastId = last?.workout_item_id; const lastSess = prev.filter((l) => l.workout_item_id === lastId);
-    const lastTarget = lastSess[0]?.workout_items?.target_reps || it.target_reps;
-    const topW = Math.max(0, ...lastSess.map((l) => l.weight_kg || 0));
-    const ready = !timed && lastTarget && topW > 0 && lastSess.length >= Math.min(3, it.target_sets || 3) && lastSess.every((l) => (l.reps || 0) >= lastTarget)
-      && !(it.target_weight_kg > topW);
-    const step = topW < 10 ? 1 : 2;
-    const rows = Array.from({ length: nSets }, (_, i) => {
-      const d = done.find((l) => l.set_number === i + 1);
-      return `<div class="set-row ${d ? "done" : ""}${d?.id === "queued" ? " queued" : ""}" data-item="${it.id}" data-set="${i + 1}" data-log="${d?.id || ""}">
-        <span class="n">${i + 1}</span>
-        ${timed ? `<input type="number" inputmode="numeric" placeholder="sec" value="${d?.seconds ?? it.target_seconds ?? ""}" data-f="seconds">`
-          : `<input type="number" inputmode="numeric" placeholder="reps" value="${d?.reps ?? it.target_reps ?? ""}" data-f="reps">`}
-        <input type="number" inputmode="decimal" step="0.5" placeholder="kg" value="${d?.weight_kg ?? it.target_weight_kg ?? ""}" data-f="weight_kg">
-        <button class="${d ? "" : "secondary"} small" title="Log set" aria-label="${d ? "Logged" : "Log set"}">${d ? ICON.check : "Log"}</button></div>`;
-    }).join("");
-    return `<div class="card ex-card">
-      <div class="row between"><h2>${esc(ex.name)}</h2><span>${typesOf(ex).slice(0, 1).map((t) => `<span class="chip on">${esc(t)}</span>`).join("")}<span class="chip">${esc(ex.muscle_group)}</span></span></div>
-      ${demoHtml(ex, url)}
-      <div class="target">Coach's target: <b>${esc(targetText(it))}</b>${it.notes ? `<div class="muted">${esc(it.notes)}</div>` : ""}
-        ${last ? `<div class="muted">Last time: ${last.reps ?? last.seconds + "s"}${last.weight_kg ? " @ " + last.weight_kg + " kg" : ""}</div>` : ""}</div>
-      ${ready ? `<div class="nudge">${ICON.up} You hit every rep at ${topW} kg last time. If your form felt solid, try ${topW + step} kg today.</div>` : ""}
-      ${ex.cues?.length ? `<div class="cues"><b>Form cues</b><ul>${ex.cues.map((c) => `<li>${esc(c)}</li>`).join("")}</ul></div>` : ""}
-      ${swapHtml(swapSuggestions(ex, library || [], me.equipment))}
-      <div class="set-row muted" style="margin-top:12px"><span class="n">Set</span><span>${timed ? "Seconds" : "Reps"}</span><span>kg</span><span></span></div>
-      ${rows}
-      <button class="ghost small" data-add="${it.id}" style="margin-top:10px">+ Add set</button>
-      ${ex.instructions ? `<details style="margin-top:8px"><summary>How to</summary><p class="muted">${esc(ex.instructions)}</p></details>` : ""}
-    </div>`;
-  }));
-
-  render(`<button class="back" onclick="history.back()">Back</button>
-    <h1>${esc(w.name)}</h1>${w.notes ? `<p class="muted">${esc(w.notes)}</p>` : ""}
-    ${SECTIONS.map((sec) => { const idx = items.map((it, i) => [it, i]).filter(([it]) => sectionOf(it) === sec.key);
-      return idx.length ? `<div class="sec"><h2>${sec.key}</h2><span class="muted">${idx.length} ${idx.length === 1 ? "exercise" : "exercises"}</span></div>${idx.map(([, i]) => cards[i]).join("")}` : ""; }).join("")
+async function workoutView(id) {
+  const d = await loadWorkout(id); if (!d) return render(`<div class="empty">Workout not found.</div>`);
+  const { w, order, mine, history } = d;
+  const st = readSess(id);
+  const doneSets = mine.length, totalSets = order.reduce((s, it) => s + (it.target_sets || 3), 0);
+  render(`<button class="back" onclick="location.hash='#/workouts'">Back</button>
+    <h1>${esc(w.name)}</h1>
+    <div class="ov-stats"><div><b>${order.length}</b><span>exercises</span></div><div><b>${totalSets}</b><span>sets</span></div><div><b>~${estMinutes(order)}</b><span>minutes</span></div></div>
+    ${w.notes ? `<div class="card coach-note"><span class="muted">From your coach</span><p style="margin:4px 0 0">${esc(w.notes)}</p></div>` : ""}
+    ${w.completed_at ? `<div class="card" style="text-align:center"><span class="chip good">Completed ${fmtDate(w.completed_at)}${w.duration_seconds ? ` in ${clock(w.duration_seconds * 1000)}` : ""}</span></div>` : ""}
+    ${SECTIONS.map((sec) => { const its = order.filter((it) => sectionOf(it) === sec.key); return its.length ? `<div class="sec"><h2>${sec.key}</h2><span class="muted">${its.length}</span></div>
+      <div class="card ov-list">${its.map((it) => { const ex = it.exercises; const mv = moveFor(ex); const n = order.indexOf(it) + 1; const last = history(ex.id)[0];
+        const dn = mine.filter((l) => l.workout_item_id === it.id).length;
+        return `<a class="ov-item" href="#/session/${w.id}/${n - 1}"><span class="thumb">${mv ? moveSvg(mv, { animate: false, label: false, props: (ex.equipment || []).length > 0 }) : ""}</span>
+          <div class="grow"><b>${n}. ${esc(ex.name)}</b><div class="muted">${esc(targetText(it))}</div>${last ? `<div class="muted">Last time: ${last.sets.map(setLabel).join(", ")}</div>` : ""}</div>
+          ${dn ? `<span class="chip ${dn >= (it.target_sets || 3) ? "good" : "on"}">${dn}/${it.target_sets || 3}</span>` : ""}</a>`; }).join("")}</div>` : ""; }).join("")
       || `<div class="empty">No exercises yet.</div>`}
-    ${w.completed_at ? `<div class="card" style="text-align:center"><span class="chip good">Completed ${fmtDate(w.completed_at)}</span></div>`
-      : `<button class="block" id="finish">Finish workout</button>`}`);
+    ${order.length && !w.completed_at ? `<div class="ov-go">${st || doneSets ? `<button class="block" onclick="location.hash='#/session/${w.id}'">Resume workout${st ? ` (exercise ${(st.idx || 0) + 1} of ${order.length}, ${clock(sessElapsed(st))} in)` : ""}</button>`
+      : `<button class="block" onclick="location.hash='#/session/${w.id}'">Start workout</button>`}</div>` : ""}`);
+  startMoves($("#view"));
+}
 
-  const afterSet = (row, vals, fresh) => {
-    const it = items.find((i) => i.id === row.dataset.item); const ex = it.exercises;
-    const isPB = fresh && (vals.weight_kg ? bestW[ex.id] > 0 && vals.weight_kg > bestW[ex.id] : vals.reps && bestR[ex.id] > 0 && vals.reps > bestR[ex.id]);
-    if (vals.weight_kg) bestW[ex.id] = Math.max(bestW[ex.id] || 0, vals.weight_kg); else if (vals.reps) bestR[ex.id] = Math.max(bestR[ex.id] || 0, vals.reps);
-    if (isPB) celebratePB(ex.name, vals.weight_kg ? `${vals.weight_kg} kg` : `${vals.reps} reps`);
-    else if (it.target_weight_kg && vals.weight_kg > it.target_weight_kg) toast("Heavier than target. Strong!");
-    else if (it.target_reps && vals.reps > it.target_reps) toast("Extra reps. Nice work!");
-    else if (!fresh) toast(`Set ${row.dataset.set} updated`);
-    if (!fresh) return;
-    const rowsOf = $$(`.set-row[data-item="${it.id}"]`); const moreSets = rowsOf.some((r) => !r.classList.contains("done"));
-    const nextEx = items[items.indexOf(it) + 1]?.exercises?.name;
-    const rest = it.rest_seconds || (sectionOf(it) === "Main set" ? 60 : 20);
-    if (moreSets || nextEx) startRest(rest, moreSets ? `set ${rowsOf.findIndex((r) => !r.classList.contains("done")) + 1}` : nextEx);
-    else if (row.dataset.log !== "queued" && !isPB) toast("Last set logged. Tap Finish workout when you're done.");
+// Countdown used for rest and timed sets. Beeps, vibrates and flashes when it ends.
+let timerT = null;
+function beep() {
+  try { const ctx = new (window.AudioContext || window.webkitAudioContext)(); [0, 0.25, 0.5].forEach((t) => { const o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.value = t === 0.5 ? 1046 : 784; o.connect(g); g.connect(ctx.destination); g.gain.setValueAtTime(0.0001, ctx.currentTime + t);
+    g.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + t + 0.18); o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + 0.2); }); } catch {}
+  try { navigator.vibrate?.([200, 100, 200, 100, 300]); } catch {}
+}
+function runTimer(box, { secs, kind = "Rest", next = "", onEnd }) {
+  clearInterval(timerT); let left = secs, total = secs, paused = false;
+  const R = 34, C = 2 * Math.PI * R;
+  box.innerHTML = `<div class="timer ${kind === "Rest" ? "rest-t" : "work-t"}" role="timer">
+    <svg viewBox="0 0 80 80" aria-hidden="true"><circle cx="40" cy="40" r="${R}" class="t-bg"/><circle cx="40" cy="40" r="${R}" class="t-fg" stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="0"/></svg>
+    <div class="t-main"><span class="muted">${kind}${next ? `, then ${esc(next)}` : ""}</span><b class="t-n" aria-live="off">${clock(left * 1000)}</b></div>
+    <div class="t-btns"><button type="button" class="small secondary" data-t="pause">Pause</button><button type="button" class="small secondary" data-t="plus">+15s</button><button type="button" class="small" data-t="skip">Skip</button></div></div>`;
+  const n = box.querySelector(".t-n"), fg = box.querySelector(".t-fg"), pb = box.querySelector("[data-t=pause]");
+  const paint = () => { n.textContent = clock(left * 1000); fg.setAttribute("stroke-dashoffset", (C * (1 - left / total)).toFixed(1)); };
+  const end = (finished) => {
+    clearInterval(timerT);
+    if (finished) { beep(); box.innerHTML = `<div class="timer done-t"><b>${kind === "Rest" ? "Rest done." : "Time."}</b> <span>${next ? `Next: ${esc(next)}` : "Well done."}</span></div>`; setTimeout(() => { if (box.querySelector(".done-t")) box.innerHTML = ""; }, 5000); }
+    else box.innerHTML = "";
+    onEnd?.(finished);
   };
-  const markDone = (row, btn, id) => { row.dataset.log = id; row.classList.add("done"); row.classList.toggle("queued", id === "queued"); btn.innerHTML = ICON.check; btn.classList.remove("secondary"); };
-  const logSet = async (btn) => {
-    const row = btn.closest(".set-row");
-    if (row.dataset.log === "queued") return toast("Saved on your phone. It'll sync when you're back online.");
+  pb.onclick = () => { paused = !paused; pb.textContent = paused ? "Resume" : "Pause"; box.querySelector(".timer").classList.toggle("paused", paused); };
+  box.querySelector("[data-t=plus]").onclick = () => { left += 15; total += 15; paint(); };
+  box.querySelector("[data-t=skip]").onclick = () => end(false);
+  paint();
+  timerT = setInterval(() => { if (paused) return; left--; if (left <= 0) { left = 0; paint(); end(true); } else paint(); }, 1000);
+  return { pause: () => { paused = true; pb.textContent = "Resume"; } };
+}
+
+async function sessionView(id, startAt) {
+  const d = await loadWorkout(id); if (!d) return render(`<div class="empty">Workout not found.</div>`);
+  const { w, order, logs, history } = d; let mine = d.mine;
+  if (!order.length) return go("workout/" + id);
+  if (w.completed_at) return go("workout/" + id);
+  const { data: lib } = await sb.from("exercises").select("id,name,muscle_group,equipment");
+  let st = readSess(id) || { idx: 0, elapsed: 0, runningSince: Date.now(), startedAt: new Date().toISOString() };
+  if (startAt != null && startAt !== "") st.idx = Math.min(order.length - 1, Math.max(0, +startAt));
+  if (!st.runningSince && !st.paused) st.runningSince = Date.now();
+  const save = () => writeSess(id, st);
+  save(); activeSess = { id, get st() { return st; } };
+  $("#tabbar").hidden = true;
+  const bestBefore = {}; // per exercise: best weight and best reps before today, to spot improvements
+  order.forEach((it) => { const h = history(it.exercises.id).flatMap((s) => s.sets); bestBefore[it.exercises.id] = { w: Math.max(0, ...h.map((l) => l.weight_kg || 0)), r: Math.max(0, ...h.map((l) => l.reps || 0)), any: h.length > 0 }; });
+
+  const draw = () => {
+    const it = order[st.idx]; const ex = it.exercises; const timed = !!it.target_seconds && !it.target_reps;
+    const done = mine.filter((l) => l.workout_item_id === it.id);
+    const nSets = Math.max(it.target_sets || 3, done.length);
+    const hist = history(ex.id); const last = hist[0];
+    const totalDone = mine.length, totalSets = order.reduce((s, x) => s + Math.max(x.target_sets || 3, mine.filter((l) => l.workout_item_id === x.id).length), 0);
+    const lastSets = last?.sets || [];
+    const topW = Math.max(0, ...lastSets.map((l) => l.weight_kg || 0)); const lastTarget = it.target_reps;
+    const ready = !timed && lastTarget && topW > 0 && lastSets.length >= Math.min(3, it.target_sets || 3) && lastSets.every((l) => (l.reps || 0) >= lastTarget) && !(it.target_weight_kg > topW);
+    const nextIt = order[st.idx + 1];
+    const rows = Array.from({ length: nSets }, (_, i) => {
+      const dl = done.find((l) => l.set_number === i + 1); const prev = lastSets[i];
+      const kg = dl?.weight_kg ?? it.target_weight_kg ?? prev?.weight_kg ?? "";
+      const reps = timed ? dl?.seconds ?? it.target_seconds ?? "" : dl?.reps ?? it.target_reps ?? prev?.reps ?? "";
+      return `<div class="srow ${dl ? "done" : ""} ${dl?.id === "queued" ? "queued" : ""}" data-set="${i + 1}" data-log="${dl?.id || ""}">
+        <span class="sn">${i + 1}</span>
+        <span class="sprev">${prev ? setLabel(prev) : "–"}</span>
+        <input type="number" inputmode="decimal" step="0.5" min="0" data-f="weight_kg" value="${kg}" aria-label="Set ${i + 1} kilograms" placeholder="kg">
+        <input type="number" inputmode="numeric" min="0" data-f="${timed ? "seconds" : "reps"}" value="${reps}" aria-label="Set ${i + 1} ${timed ? "seconds" : "reps"}" placeholder="${timed ? "sec" : "reps"}">
+        ${timed && !dl ? `<button type="button" class="small secondary" data-work="${i + 1}" aria-label="Start ${it.target_seconds} second timer">${it.target_seconds || 30}s</button>` : ""}
+        <button type="button" class="sdone" data-done="${i + 1}" aria-pressed="${!!dl}" aria-label="${dl ? "Set done" : "Mark set done"}">${ICON.check}</button></div>`;
+    }).join("");
+    render(`<div class="sess">
+      <div class="sess-top">
+        <button type="button" class="small secondary" id="sPause" aria-label="Pause workout">Pause</button>
+        <button type="button" class="sess-prog" id="sList" aria-label="Show all exercises"><b>Exercise ${st.idx + 1} of ${order.length}</b><span>${totalDone}/${totalSets} sets</span></button>
+        <span class="sess-clock" id="sClock">${clock(sessElapsed(st))}</span></div>
+      <div class="progress" style="margin:8px 0 12px"><div style="width:${Math.round((totalDone / Math.max(1, totalSets)) * 100)}%"></div></div>
+      <span class="chip">${esc(sectionOf(it))}</span>
+      <h1 style="margin-top:6px">${esc(ex.name)}</h1>
+      <p class="muted" style="margin:-2px 0 8px">${esc([...new Set([catOf(ex), ex.muscle_group].filter(Boolean))].join(", "))}${(ex.equipment || []).length ? `. ${(ex.equipment || []).map(esc).join(", ")}` : ""}</p>
+      <div class="sess-demo" id="demo">${demoHtml(ex, d.urls?.[ex.video_path]) || `<div class="empty">No demo yet. Ask your coach for a video.</div>`}</div>
+      <button type="button" class="small ghost" id="replay">Replay demo</button>
+      <div class="sess-target"><b>${esc(targetText(it))}</b>${it.notes ? `<div class="coach-note-inline">${esc(it.notes)}</div>` : ""}</div>
+      ${ready ? `<div class="nudge">${ICON.up} You hit every rep at ${topW} kg last time. If your form felt solid, try ${topW + (topW < 10 ? 1 : 2)} kg today.</div>` : ""}
+      <div id="timer"></div>
+      <div class="card sets"><div class="srow head"><span>Set</span><span>Last time</span><span>kg</span><span>${timed ? "Secs" : "Reps"}</span><span></span></div>${rows}
+        <button type="button" class="small ghost" id="addSet" style="margin-top:8px">+ Add a set</button></div>
+      ${ex.instructions || ex.cues?.length ? `<details class="card how" ${hist.length ? "" : "open"}><summary>How to do it</summary>${ex.instructions ? `<p>${esc(ex.instructions)}</p>` : ""}
+        ${ex.cues?.length ? `<ul class="tips">${ex.cues.map((c) => `<li>${esc(c)}</li>`).join("")}</ul>` : ""}</details>` : ""}
+      ${hist.length ? `<details class="card"><summary>Your history (${hist.length} ${hist.length === 1 ? "session" : "sessions"})</summary>
+        ${hist.slice(0, 8).map((h) => `<div class="hist"><span class="muted">${fmtDate(h.date)}</span><span>${h.sets.map(setLabel).join(", ")}</span></div>`).join("")}</details>` : ""}
+      ${swapHtml(swapSuggestions(ex, lib || [], me.equipment))}
+      <div class="sess-nav"><button type="button" class="secondary" id="sPrev" ${st.idx ? "" : "disabled"}>Previous</button>
+        <button type="button" id="sNext">${nextIt ? "Next exercise" : "Finish workout"}</button></div></div>`);
+    $("#topbar").hidden = false; $("#tabbar").hidden = true;
+    startMoves($("#demo"));
+    if (done.length >= (it.target_sets || 3)) $("#sNext").classList.add("pulse");
+    bind(it, nextIt, timed);
+  };
+
+  const ticker = setInterval(() => { const c = $("#sClock"); if (!c) return clearInterval(ticker); c.textContent = clock(sessElapsed(st)); }, 1000);
+  const goTo = (i) => { clearInterval(timerT); st.idx = i; save(); draw(); window.scrollTo(0, 0); };
+
+  const saveSet = async (row, it) => {
     const vals = Object.fromEntries($$("input", row).map((i) => [i.dataset.f, num(i.value)]));
-    const rec = { workout_item_id: row.dataset.item, client_id: me.id, set_number: Number(row.dataset.set), ...vals, logged_at: new Date().toISOString() };
+    const rec = { workout_item_id: it.id, client_id: me.id, set_number: Number(row.dataset.set), ...vals, logged_at: new Date().toISOString() };
+    if (row.dataset.log === "queued") return toast("Saved on your phone. It'll sync when you're back online.");
     const fresh = !row.dataset.log;
-    const queue = () => { writeQ([...readQ(), rec]); markDone(row, btn, "queued"); toast("No signal. Saved on your phone; it'll sync when you're back online."); afterSet(row, vals, true); };
+    const queue = () => { writeQ([...readQ(), rec]); mine.push({ ...rec, id: "queued" }); row.dataset.log = "queued"; row.classList.add("done", "queued"); toast("No signal. Saved on your phone; it'll sync later."); return true; };
     if (fresh && !navigator.onLine) return queue();
-    btn.disabled = true;
-    const q = !fresh ? sb.from("set_logs").update(vals).eq("id", row.dataset.log).select().single()
-      : sb.from("set_logs").insert(rec).select().single();
-    const { data, error } = await q; btn.disabled = false;
+    const { data, error } = fresh ? await sb.from("set_logs").insert(rec).select().single() : await sb.from("set_logs").update(vals).eq("id", row.dataset.log).select().single();
     if (error && fresh && isNetErr(error)) return queue();
-    if (fail(error)) return;
-    markDone(row, btn, data.id);
-    afterSet(row, vals, fresh);
+    if (fail(error)) return false;
+    if (fresh) mine.push({ ...data, workout_items: { exercise_id: it.exercises.id } }); else Object.assign(mine.find((l) => l.id === data.id) || {}, vals);
+    row.dataset.log = data.id; row.classList.add("done");
+    // personal best?
+    const b = bestBefore[it.exercises.id];
+    if (fresh && b.any && (vals.weight_kg ? vals.weight_kg > b.w : vals.reps && !b.w && vals.reps > b.r)) {
+      celebratePB(it.exercises.name, vals.weight_kg ? `${vals.weight_kg} kg` : `${vals.reps} reps`);
+      if (vals.weight_kg) b.w = vals.weight_kg; else b.r = vals.reps;
+    }
+    return true;
   };
-  $$(".set-row[data-item] button").forEach((btn) => (btn.onclick = () => logSet(btn)));
-  $$("[data-add]").forEach((b) => (b.onclick = () => {
-    const rows = $$(`.set-row[data-item="${b.dataset.add}"]`); const lastRow = rows[rows.length - 1];
-    const clone = lastRow.cloneNode(true); clone.dataset.set = rows.length + 1; clone.dataset.log = ""; clone.classList.remove("done");
-    clone.querySelector(".n").textContent = rows.length + 1;
-    clone.classList.remove("queued");
-    const btn = clone.querySelector("button"); btn.textContent = "Log"; btn.classList.add("secondary");
-    lastRow.after(clone); btn.onclick = () => logSet(btn);
-  }));
-  $("#finish")?.addEventListener("click", async () => {
-    if (!navigator.onLine) return toast("You're offline. Your sets are saved on your phone. Tap Finish again once you have signal.");
-    await flushQ();
-    const { error } = await sb.from("workouts").update({ completed_at: new Date().toISOString() }).eq("id", w.id);
-    if (fail(error)) return;
-    await sb.from("messages").insert({ client_id: me.id, sender_id: me.id, body: `Finished "${w.name}"` });
-    toast("Workout complete! Your coach has been notified"); go("home");
-  });
+
+  const bind = (it, nextIt, timed) => {
+    const startRestFor = (setNo) => {
+      const rows = $$(".srow[data-set]"); const moreSets = rows.some((r) => !r.classList.contains("done"));
+      const rest = it.rest_seconds || (sectionOf(it) === "Main set" ? 60 : 20);
+      if (!moreSets && !nextIt) return;
+      runTimer($("#timer"), { secs: rest, kind: "Rest", next: moreSets ? `set ${setNo + 1}` : nextIt.exercises.name });
+      $("#timer").scrollIntoView({ block: "nearest", behavior: "smooth" });
+    };
+    $$("[data-done]").forEach((b) => (b.onclick = async () => {
+      const row = b.closest(".srow"); const wasDone = row.classList.contains("done");
+      b.disabled = true; const ok = await saveSet(row, it); b.disabled = false; if (!ok) return;
+      b.setAttribute("aria-pressed", "true");
+      if (!wasDone) { const all = $$(".srow[data-set]").every((r) => r.classList.contains("done")); toast(all ? "All sets done. Great work." : `Set ${row.dataset.set} saved`); startRestFor(+row.dataset.set);
+        if (all) $("#sNext").classList.add("pulse"); }
+      else toast("Updated");
+    }));
+    // edits to a finished set save automatically
+    $$(".srow[data-set] input").forEach((inp) => (inp.onchange = () => { const row = inp.closest(".srow"); if (row.classList.contains("done")) saveSet(row, it).then((ok) => ok && toast("Saved")); }));
+    $$("[data-work]").forEach((b) => (b.onclick = () => {
+      const row = b.closest(".srow");
+      runTimer($("#timer"), { secs: it.target_seconds || 30, kind: "Work", next: "rest", onEnd: async (finished) => {
+        if (!finished) return;
+        const ok = await saveSet(row, it); if (ok) { row.querySelector("[data-done]").setAttribute("aria-pressed", "true"); b.remove(); setTimeout(() => startRestFor(+row.dataset.set), 1200); }
+      } });
+    }));
+    $("#addSet").onclick = () => {
+      const rows = $$(".srow[data-set]"); const last = rows[rows.length - 1]; const c = last.cloneNode(true); const n = rows.length + 1;
+      c.dataset.set = n; c.dataset.log = ""; c.classList.remove("done", "queued"); c.querySelector(".sn").textContent = n; c.querySelector(".sprev").textContent = "–";
+      c.querySelector("[data-done]").setAttribute("aria-pressed", "false"); c.querySelector("[data-done]").dataset.done = n; c.querySelector("[data-work]")?.remove();
+      last.after(c); bind(it, nextIt, timed);
+    };
+    $("#replay").onclick = () => {
+      const v = $("#demo video"); if (v) { v.currentTime = 0; v.play?.(); return; }
+      const f = $("#demo iframe"); if (f) { f.src = f.src; return; }
+      $("#demo").innerHTML = demoHtml(it.exercises, null); startMoves($("#demo"));
+    };
+    $("#sPrev").onclick = () => st.idx > 0 && goTo(st.idx - 1);
+    $("#sNext").onclick = () => (nextIt ? goTo(st.idx + 1) : finish());
+    $("#sList").onclick = () => {
+      document.body.insertAdjacentHTML("beforeend", `<div class="picker" id="slist" role="dialog" aria-label="Exercises in this workout"><div class="picker-box">
+        <div class="row between"><h2 style="margin:0">${esc(w.name)}</h2><button type="button" class="small" id="slX">Close</button></div>
+        ${order.map((x, i) => { const dn = mine.filter((l) => l.workout_item_id === x.id).length; return `<button type="button" class="list-item sl-item ${i === st.idx ? "cur" : ""}" data-go="${i}">
+          <div class="grow"><b>${i + 1}. ${esc(x.exercises.name)}</b><div class="muted">${esc(sectionOf(x))}, ${esc(targetText(x))}</div></div><span class="chip ${dn >= (x.target_sets || 3) ? "good" : ""}">${dn}/${x.target_sets || 3}</span></button>`; }).join("")}</div></div>`);
+      $("#slX").onclick = () => $("#slist").remove(); $("#slist").addEventListener("click", (e) => { if (e.target.id === "slist") $("#slist").remove(); });
+      $$("[data-go]").forEach((b) => (b.onclick = () => { $("#slist").remove(); goTo(+b.dataset.go); }));
+    };
+    $("#sPause").onclick = () => {
+      st.elapsed = sessElapsed(st); st.runningSince = null; st.paused = true; save(); clearInterval(timerT);
+      document.body.insertAdjacentHTML("beforeend", `<div class="celebrate" id="pz" role="dialog" aria-label="Workout paused"><div class="box">
+        <h2>Workout paused</h2><p class="muted">${clock(st.elapsed)} so far. Your sets are saved. Pick up where you left off any time today or later.</p>
+        <button class="block" id="pzGo">Resume</button><button class="block secondary" id="pzOut" style="margin-top:8px">Save and leave</button></div></div>`);
+      $("#pzGo").onclick = () => { $("#pz").remove(); st.paused = false; st.runningSince = Date.now(); save(); };
+      $("#pzOut").onclick = () => { $("#pz").remove(); go("workout/" + id); };
+    };
+  };
+
+  const finish = () => {
+    const totalSets = order.reduce((s, x) => s + (x.target_sets || 3), 0);
+    if (mine.length < totalSets && !confirm(`You've done ${mine.length} of ${totalSets} sets. Finish the workout anyway?`)) return;
+    clearInterval(timerT); clearInterval(ticker);
+    st.elapsed = sessElapsed(st); st.runningSince = null; save();
+    const secs = Math.round(st.elapsed / 1000);
+    const exDone = order.filter((x) => mine.some((l) => l.workout_item_id === x.id)).length;
+    const volume = Math.round(mine.reduce((s, l) => s + (l.weight_kg || 0) * (l.reps || 0), 0));
+    const wins = order.flatMap((x) => {
+      const today = mine.filter((l) => l.workout_item_id === x.id); if (!today.length) return [];
+      const h = history(x.exercises.id)[0]; if (!h) return [];
+      const tw = Math.max(0, ...today.map((l) => l.weight_kg || 0)), pw = Math.max(0, ...h.sets.map((l) => l.weight_kg || 0));
+      const tr = today.reduce((s, l) => s + (l.reps || 0), 0), pr = h.sets.reduce((s, l) => s + (l.reps || 0), 0);
+      if (tw > pw && pw) return [`${x.exercises.name}: ${tw} kg, up from ${pw} kg`];
+      if (tw === pw && tr > pr) return [`${x.exercises.name}: ${tr - pr} more ${tr - pr === 1 ? "rep" : "reps"} than last time`];
+      return [];
+    });
+    const DIFF = ["Very easy", "Easy", "Just right", "Hard", "Very hard"];
+    render(`<div class="sess sum"><div class="sum-head">${medal({ glyph: "✓" }, true, 110)}<h1>Workout complete</h1><p class="muted">${esc(w.name)}</p></div>
+      <div class="ov-stats"><div><b>${clock(secs * 1000)}</b><span>duration</span></div><div><b>${exDone}/${order.length}</b><span>exercises</span></div><div><b>${mine.length}</b><span>sets</span></div></div>
+      ${volume ? `<p class="muted" style="text-align:center">${volume.toLocaleString("en-ZA")} kg lifted in total</p>` : ""}
+      <div class="card"><h3>${wins.length ? "Improvements" : "Progress"}</h3>${wins.length ? `<ul class="tips">${wins.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : `<p class="muted" style="margin:0">Matching last time still counts. Consistency is what builds results.</p>`}</div>
+      <form class="card" id="fb"><h3>How hard was it?</h3><div class="diff">${DIFF.map((l, i) => `<label><input type="radio" name="d" value="${i + 1}" ${i === 2 ? "checked" : ""}><span>${l}</span></label>`).join("")}</div>
+        <label for="fbT">Anything for your coach?</label><textarea id="fbT" name="t" maxlength="1000" placeholder="Optional, e.g. squats felt easy, left knee a bit sore"></textarea>
+        <button class="block" style="margin-top:12px">Save workout</button></form></div>`);
+    $("#topbar").hidden = false;
+    $("#fb").onsubmit = async (e) => {
+      e.preventDefault(); const f = e.target; const btn = f.querySelector("button"); btn.disabled = true;
+      if (!navigator.onLine) { btn.disabled = false; return toast("You're offline. Your sets are saved on your phone. Tap Save again when you have signal."); }
+      await flushQ();
+      const difficulty = +f.d.value, feedback = f.t.value.trim() || null;
+      const { error } = await sb.from("workouts").update({ completed_at: new Date().toISOString(), duration_seconds: secs, difficulty, client_feedback: feedback }).eq("id", w.id);
+      if (fail(error)) { btn.disabled = false; return; }
+      clearSess(id);
+      if (me.trainer_id && me.trainer_id !== me.id) await sb.from("messages").insert({ client_id: me.id, sender_id: me.id,
+        body: `Finished "${w.name}" in ${clock(secs * 1000)}: ${mine.length} sets, felt ${DIFF[difficulty - 1].toLowerCase()}.${wins.length ? ` ${wins.join("; ")}.` : ""}${feedback ? ` Note: ${feedback}` : ""}` });
+      toast("Workout saved. Your coach can see how it went."); go("home");
+    };
+  };
+  draw();
 }
 
 // ---------------------------------------------------------------- client exercise library
@@ -1431,7 +1594,9 @@ async function chatView(clientId) {
   render(`${me.role === "trainer" ? `<button class="back" onclick="location.hash='#/inbox'">← Inbox</button>` : ""}
     <div class="row" style="margin-bottom:8px">${avatar(other)}<h2 style="margin:0">${esc(other?.full_name || "Coach")}</h2></div>
     <div class="chat"><div class="chat-log" id="log"></div>
-    <form class="chat-input" id="send"><textarea name="m" placeholder="Message…" required></textarea><button>Send</button></form></div>`);
+    ${canChat() ? `<form class="chat-input" id="send"><textarea name="m" placeholder="Message…" required></textarea><button>Send</button></form>`
+      : `<div class="card chat-lock"><h3>Chat with your coach</h3><p class="muted" style="margin:0 0 10px">Messaging your coach for advice is included with a pass or a PT plan. You'll still see anything your coach sends you here.</p>
+        <button class="block" onclick="location.hash='#/passes'">See passes</button></div>`}</div>`);
   const log = $("#log");
   const add = (m) => {
     log.insertAdjacentHTML("beforeend", `<div class="bubble ${m.sender_id === me.id ? "me" : "them"}">${esc(m.body)}<time>${fmtTime(m.created_at)}</time></div>`);
@@ -1445,7 +1610,7 @@ async function chatView(clientId) {
       if (p.new.sender_id !== me.id) { add(p.new); sb.from("messages").update({ read_at: new Date().toISOString() }).eq("id", p.new.id); }
     }).subscribe();
 
-  const form = $("#send");
+  const form = $("#send"); if (!form) return;
   form.m.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); } });
   form.onsubmit = async (e) => {
     e.preventDefault(); const body = form.m.value.trim(); if (!body) return;
@@ -1874,8 +2039,9 @@ async function trainerClient(id) {
         <input id="iaD" type="date" value="${today()}" aria-label="Date"><button class="small secondary">Assign</button></form>
         <p class="muted" style="margin:4px 0 8px">Assign one of your saved workouts. You can adjust ${esc(firstName(c))}'s copy straight after.</p>` : ""}
       ${(wos || []).map((w) => `<a class="list-item" href="#/builder/${c.id}/${w.id}"><div class="grow"><b>${esc(w.name)}</b>
-        <div class="muted">${w.workout_items?.[0]?.count || 0} exercises${w.scheduled_date ? ", " + fmtDate(w.scheduled_date) : ""}${w.template_id ? `, from "${esc((tpls || []).find((t) => t.id === w.template_id)?.name || "a saved workout")}"` : ""}</div></div>
-        ${w.completed_at ? `<span class="chip good">Done ${fmtDate(w.completed_at)}</span>` : `<span class="chip">Open</span>`}</a>`).join("")
+        <div class="muted">${w.workout_items?.[0]?.count || 0} exercises${w.scheduled_date ? ", " + fmtDate(w.scheduled_date) : ""}${w.duration_seconds ? `, took ${Math.round(w.duration_seconds / 60)} min` : ""}${w.difficulty ? `, felt ${["very easy", "easy", "just right", "hard", "very hard"][w.difficulty - 1]}` : ""}${w.template_id ? `, from "${esc((tpls || []).find((t) => t.id === w.template_id)?.name || "a saved workout")}"` : ""}</div></div>
+        ${w.completed_at ? `<span class="chip good">Done ${fmtDate(w.completed_at)}</span>` : `<span class="chip">Open</span>`}</a>
+        ${w.client_feedback ? `<p class="muted fb-note">"${esc(w.client_feedback)}"</p>` : ""}`).join("")
         || `<div class="empty">No workouts yet.</div>`}</div>
     ${prog.html}`);
   prog.after();
