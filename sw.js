@@ -1,6 +1,6 @@
 // Lets the app install on phones and open fast. Data always comes live from the server.
-const CACHE = "or-app-v8";
-const SHELL = ["./", "index.html", "css/styles.css", "js/app.js", "js/config.js", "js/nutrition.js", "js/engage.js", "manifest.json"];
+const CACHE = "or-app-v9";
+const SHELL = ["./", "index.html", "css/styles.css", "js/app.js", "js/config.js", "js/nutrition.js", "js/engage.js", "js/moves.js", "js/starter.js", "manifest.json"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
