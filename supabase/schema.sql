@@ -407,3 +407,53 @@ create policy "client owns checkins" on public.checkins for all
   using (client_id = auth.uid()) with check (client_id = auth.uid());
 drop policy if exists "trainer reads checkins" on public.checkins;
 create policy "trainer reads checkins" on public.checkins for select using (public.coaches(client_id));
+
+-- =====================================================================
+-- STREAK REWARDS, NUTRITION ON BY DEFAULT
+-- =====================================================================
+-- A library video can be a bonus that unlocks at a 7, 14 or 30-day streak
+alter table public.exercises add column if not exists reward_streak int;
+do $$ begin
+  alter table public.exercises add constraint exercises_reward_streak_check check (reward_streak in (7, 14, 30));
+exception when duplicate_object then null; end $$;
+
+-- Nutrition is switched on for every client unless they turn it off
+alter table public.profiles alter column tracks set default '{exercise,nutrition}';
+update public.profiles set tracks = array_append(tracks, 'nutrition')
+  where role = 'client' and not ('nutrition' = any(tracks));
+
+-- The logged-in client's best run of consecutive active days (any set, activity,
+-- finished workout, daily challenge or day they opened the app)
+create or replace function public.best_streak()
+returns int language sql stable security definer set search_path = public as $$
+  with d as (
+    select distinct dt from (
+      select (logged_at at time zone 'Africa/Johannesburg')::date as dt from public.set_logs where client_id = auth.uid()
+      union select activity_date from public.activities where client_id = auth.uid()
+      union select (completed_at at time zone 'Africa/Johannesburg')::date from public.workouts where client_id = auth.uid() and completed_at is not null
+      union select challenge_date from public.challenge_completions where client_id = auth.uid()
+      union select checkin_date from public.checkins where client_id = auth.uid()
+    ) x),
+  g as (select dt - (row_number() over (order by dt))::int as grp from d)
+  select coalesce(max(n), 0)::int from (select count(*) as n from g group by grp) s;
+$$;
+
+-- Which streak milestones have a bonus video waiting (names stay hidden until unlocked)
+create or replace function public.reward_milestones()
+returns int[] language sql stable security definer set search_path = public as $$
+  select coalesce(array_agg(distinct reward_streak order by reward_streak), '{}')
+  from public.exercises where trainer_id = public.my_trainer_id() and reward_streak is not null;
+$$;
+
+-- Clients see: library videos with a pass, bonus videos once their streak earns them,
+-- and anything in their own workouts
+drop policy if exists "clients read their trainer's library" on public.exercises;
+create policy "clients read their trainer's library" on public.exercises for select using (
+  trainer_id = public.my_trainer_id()
+  and (
+    (reward_streak is null and public.has_library())
+    or (reward_streak is not null and public.best_streak() >= reward_streak)
+    or exists (select 1 from public.workout_items wi join public.workouts w on w.id = wi.workout_id
+               where wi.exercise_id = exercises.id and w.client_id = auth.uid())
+  )
+);
