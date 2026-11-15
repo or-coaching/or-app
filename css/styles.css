@@ -298,3 +298,74 @@ ol.steps { padding-left: 20px; } ol.steps li { margin: 6px 0; }
 
 /* Bonus videos */
 .reward .avatar svg { width: 20px; height: 20px; }
+
+/* ================================================================
+   Brand forms: the O (ring) and the full stop (dot) from the logo
+   ================================================================ */
+.forms { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.forms .f-ring { fill: none; stroke: var(--primary); opacity: .72; }
+.forms .f-thin { fill: none; stroke: var(--text); stroke-width: 1.2; opacity: .16; }
+.forms .f-hatch line { stroke: var(--text); stroke-width: 1; opacity: .13; }
+.forms .f-dot { fill: var(--primary); }
+
+/* Hero: angled cut on the top-right corner */
+.hero {
+  border-radius: 26px 0 26px 26px;
+  clip-path: polygon(0 0, calc(100% - 44px) 0, 100% 44px, 100% 100%, 0 100%);
+  background: linear-gradient(160deg, #26302A 0%, #1C211E 60%, #191C1A 100%);
+}
+.hero .mark { display: none; }
+.hero::after { background: linear-gradient(180deg, rgba(23,26,24,0) 25%, rgba(23,26,24,.7) 60%, rgba(23,26,24,.97) 100%); }
+.hero h1 { font-size: 2.6rem; letter-spacing: -.03em; max-width: 14ch; text-wrap: balance; }
+.hero .tag { border: 1px solid rgba(239,232,220,.14); }
+
+/* Sign-in */
+.auth-hero { background: linear-gradient(170deg, #26302A, #171A18 75%); }
+.auth-hero .forms .f-ring { opacity: .75; }
+
+/* Headings end with the logo's full stop */
+main > h1::after, .sec h2::after, .hero h1::after {
+  content: ""; display: inline-block; width: .2em; height: .2em; border-radius: 50%;
+  background: var(--primary); margin-left: .07em; vertical-align: baseline;
+}
+.sec { border-top: 1px solid var(--line); padding-top: 18px; margin-top: 26px; }
+
+/* Month grid: rings for days, solid dots for active days */
+.month { gap: 7px; }
+.month i { border-radius: 50%; background: transparent; border: 1.5px solid rgba(239,232,220,.14); }
+.month i.lit { background: var(--primary); border-color: var(--primary); animation: lit .5s both; animation-delay: calc(var(--n) * 25ms); }
+.month i.today { outline: none; border: 2px solid var(--text); }
+.month i.today.lit { box-shadow: 0 0 0 3px var(--bg), 0 0 0 4.5px var(--text); border-color: var(--primary); }
+.month i.future { opacity: .4; border-style: dashed; }
+
+/* Progress: track with a dot at the leading edge */
+.progress { height: 4px; overflow: visible; position: relative; }
+.progress > div { position: relative; }
+.progress > div::after { content: ""; position: absolute; right: -5px; top: 50%; width: 10px; height: 10px; border-radius: 50%; background: var(--primary); transform: translateY(-50%); box-shadow: 0 0 0 3px var(--surface); }
+
+/* Tab bar: active tab marked with the dot, not a filled pill */
+.tabbar .pill a.active { background: transparent; color: var(--text); }
+.tabbar .pill a.active::after { content: ""; position: absolute; bottom: 1px; left: 50%; width: 5px; height: 5px; margin-left: -2.5px; border-radius: 50%; background: var(--primary); }
+.tabbar .pill a.active svg { color: var(--primary); }
+
+/* Stat tiles: numbers on a hairline, no boxes */
+.grid3 > .card:has(> .stat) { background: transparent; border: 0; border-top: 1px solid var(--line); border-radius: 0; padding: 14px 2px 4px; }
+.stat { font-size: 2.2rem; letter-spacing: -.02em; }
+
+/* Library tiles without video */
+.tile .ph { background: linear-gradient(165deg, #27312B, #1D221F); font-size: 0; }
+.tile .ph .forms .f-ring { opacity: .8; }
+.tile:nth-child(3n+2) .ph { background: linear-gradient(165deg, #2C342E, #1F2521); }
+.tile { border-radius: 18px 4px 18px 18px; }
+
+/* Cards: the primary call-to-action card gets the cut corner too */
+.card.reward, .checkin { border-radius: 20px 4px 20px 20px; }
+.card.tip { border-left: 0; border-radius: 20px; position: relative; padding-left: 44px; }
+.card.tip::before { content: ""; position: absolute; left: 18px; top: 22px; width: 10px; height: 10px; border-radius: 50%; background: var(--warn); }
+
+/* Icon-only small buttons */
+button.small svg { width: 16px; height: 16px; }
+.set-row button svg { width: 18px; height: 18px; }
+
+@media (prefers-reduced-motion: reduce) { .month i.lit { animation: none; } }
+.auth-hero .forms .f-dot { display: none; }
