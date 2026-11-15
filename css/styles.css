@@ -279,3 +279,19 @@ details summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
 .recipe-card:last-child { border-bottom: 0; }
 .recipe-card .pts { font-family: var(--display); font-weight: 700; font-size: 1.3rem; min-width: 44px; height: 44px; border-radius: 12px; background: var(--surface-2); display: grid; place-items: center; color: var(--primary); }
 ol.steps { padding-left: 20px; } ol.steps li { margin: 6px 0; }
+
+/* Daily check-in */
+.checkin fieldset { border: 0; padding: 0; margin: 12px 0 0; }
+.checkin legend { font-size: .85rem; font-weight: 500; color: var(--muted); padding: 0; margin-bottom: 6px; }
+.ck-scale { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.ck-scale label { margin: 0; }
+.ck-scale input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.ck-scale span { display: grid; place-items: center; height: 44px; border-radius: 12px; background: var(--bg); border: 1px solid var(--line); font-family: var(--display); font-size: 1.1rem; font-weight: 600; color: var(--text); cursor: pointer; }
+.ck-scale input:checked + span { background: var(--primary); color: var(--on-primary); border-color: var(--primary); }
+.ck-scale input:focus-visible + span { outline: 2px solid var(--primary); outline-offset: 2px; }
+.ck-ends { display: flex; justify-content: space-between; font-size: .74rem; color: var(--muted); margin-top: 4px; }
+.ck-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 8px; }
+.ck-table { display: grid; grid-template-columns: 1.2fr repeat(3, 1fr); gap: 8px 10px; align-items: center; margin-top: 10px; font-variant-numeric: tabular-nums; }
+.ck-table .chip { margin: 0; justify-self: start; }
+.ck-note { grid-column: 1 / -1; font-size: .85rem; color: var(--muted); margin-top: -4px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.ck-summary .stat-label { display: block; }
