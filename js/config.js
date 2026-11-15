@@ -16,7 +16,7 @@ export const CONFIG = {
   PRIVACY_URL: "privacy.html",
 
   // Her Instagram (leave "" to hide)
-  INSTAGRAM_URL: "",
+  INSTAGRAM_URL: "https://www.instagram.com/or.collective/",
 
   // Payment links from PayFast / Yoco / Paystack (no coding — create them in their dashboard).
   // Leave "" to hide a button.
