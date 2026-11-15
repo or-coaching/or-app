@@ -685,3 +685,11 @@ create policy "client owns water" on public.water_logs for all
   using (client_id = auth.uid()) with check (client_id = auth.uid());
 drop policy if exists "coach reads water" on public.water_logs;
 create policy "coach reads water" on public.water_logs for select using (public.coaches(client_id));
+
+-- =====================================================================
+-- EXERCISE CATEGORIES, WORKOUT LIBRARY LINK
+-- =====================================================================
+alter table public.exercises add column if not exists category text;   -- Strength, Cardio, Core, Mobility, Stretch, Power, Balance
+-- Which saved workout a client's workout was copied from. The copy is independent:
+-- editing it never changes the saved workout or anyone else's copy.
+alter table public.workouts add column if not exists template_id uuid references public.workout_templates(id) on delete set null;

@@ -495,3 +495,50 @@ button.small svg { width: 16px; height: 16px; }
 @media (max-width: 380px) { .mode-pick { grid-template-columns: 1fr; } }
 .list-item .ico { flex: none; color: var(--primary); }
 .list-item .ico svg { width: 20px; height: 20px; display: block; }
+
+/* Coach / My training switch, sample-data bar */
+.mode-btn { height: 40px; padding: 0 14px; border-radius: 999px; background: var(--surface); color: var(--text); border: 1px solid rgba(156, 181, 154, .45); font-size: .82rem; font-weight: 600; white-space: nowrap; }
+.demo-bar { position: sticky; top: 0; z-index: 80; background: var(--warn); color: #1d1a12; font-size: .82rem; text-align: center; padding: 6px 12px; }
+.demo-bar a { color: #1d1a12; font-weight: 700; }
+
+/* Exercise library and picker */
+.fbar { display: grid; gap: 8px; }
+.fsel { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.fsel select { font-size: .82rem; padding: 9px 8px; }
+.ex-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.ex-tile { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 8px 8px 10px; border-radius: 16px 4px 16px 16px; background: var(--surface); color: var(--text); border: 1px solid var(--line); text-decoration: none; font-weight: 400; position: relative; }
+.picker .ex-tile { background: var(--bg); }
+.ex-tile .move, .ex-tile .ph, .ex-tile video { margin: 0 0 6px; border-radius: 10px; display: block; aspect-ratio: 200 / 162; overflow: hidden; width: 100%; object-fit: cover; }
+.ex-tile .ph { background: linear-gradient(165deg, #27312B, #1D221F); }
+.ex-tile .ph svg { width: 100%; height: 100%; }
+.ex-tile b { font-size: .9rem; line-height: 1.25; }
+.ex-tile span { font-size: .76rem; color: var(--text); opacity: .85; }
+.ex-tile span.muted { color: var(--muted); opacity: 1; }
+.ex-tile .chip { align-self: flex-start; margin-top: 4px; }
+.ex-tile:hover, .ex-tile:focus-visible { border-color: var(--primary); }
+.ex-tile.added { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); }
+.ex-tile.added::after { content: "Added"; position: absolute; top: 12px; right: 12px; background: var(--primary); color: var(--on-primary); font-size: .7rem; font-weight: 700; border-radius: 999px; padding: 2px 8px; }
+
+/* Builder */
+.grid5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 8px; }
+.grid5 label { font-size: .72rem; }
+.grid5 input { padding: 9px 4px; text-align: center; min-width: 0; }
+.grid5 > div { min-width: 0; }
+.drag { width: 36px; height: 44px; flex: none; padding: 0; display: grid; place-items: center; background: transparent; color: var(--muted); border: 1px dashed var(--line); border-radius: 10px; cursor: grab; touch-action: none; }
+.drag svg { width: 18px; height: 18px; }
+.drag:focus-visible { outline: 2px solid var(--primary); }
+.build-item.dragging { box-shadow: 0 16px 40px rgba(0, 0, 0, .5); border-color: var(--primary); opacity: .96; }
+.build-item.dragging .drag { cursor: grabbing; }
+.build-ph { border: 2px dashed rgba(156, 181, 154, .5); border-radius: 18px; margin-bottom: 12px; }
+.build-list { min-height: 44px; }
+.drop-hint { border: 1px dashed var(--line); border-radius: 14px; padding: 12px; margin: 0 0 10px; }
+.build-item .thumb { width: 72px; }
+.build-bar { border-color: rgba(156, 181, 154, .35); }
+
+/* Workout library */
+.wk-head { display: block; }
+.wk-thumbs { display: flex; gap: 6px; margin-bottom: 8px; }
+.wk-thumbs .thumb { width: 58px; }
+.wk-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.inline-assign { display: grid; grid-template-columns: 1fr auto auto; gap: 6px; margin-top: 10px; }
+.inline-assign select, .inline-assign input { font-size: .85rem; padding: 8px; }

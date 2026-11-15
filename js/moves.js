@@ -54,6 +54,27 @@ export const MOVES = {
     label: "Dead bug", pin: "hip", secs: 3.2,
     frames: [P({ torso: 180, head: 180, th: [90, 90], sh: [0, 0], ft: [90, 90], ua: [90, 90], fa: [90, 90] }), P({ torso: 180, head: 180, th: [8, 90], sh: [4, 0], ft: [60, 90], ua: [90, 172], fa: [90, 174] })],
   },
+  calf: {
+    label: "Calf raise", pin: "ankle", secs: 2.2,
+    frames: [P({}), P({ ft: [312, 312], ua: [268, 272], fa: [270, 274] })],
+  },
+  curl: {
+    label: "Biceps curl", pin: "ankle", prop: "dumbbells", secs: 2.4,
+    frames: [P({ ua: [268, 270], fa: [268, 270] }), P({ ua: [262, 264], fa: [96, 100] })],
+  },
+  mountain: {
+    label: "Mountain climber", pin: "hip", x: 96, secs: 1.2,
+    frames: [P({ torso: 12, head: 14, th: [190, 190], sh: [190, 190], ft: [296, 296], ua: [272, 272], fa: [272, 272] }),
+      P({ torso: 12, head: 14, th: [300, 190], sh: [208, 190], ft: [270, 296], ua: [272, 272], fa: [272, 272] })],
+  },
+  crunch: {
+    label: "Crunch", pin: "ankle", x: 140, secs: 2.6,
+    frames: [P({ torso: 181, head: 180, th: [52, 52], sh: [292, 292], ua: [120, 120], fa: [330, 330] }), P({ torso: 148, head: 132, th: [52, 52], sh: [292, 292], ua: [100, 100], fa: [330, 330] })],
+  },
+  highknees: {
+    label: "High knees", pin: "hip", x: 100, secs: 0.9,
+    frames: [P({ th: [352, 272], sh: [272, 270], ua: [300, 236], fa: [40, 268] }), P({ th: [272, 352], sh: [270, 272], ua: [236, 300], fa: [268, 40] })],
+  },
   stretch: {
     label: "Lunge and reach", pin: "ankle", x: 128, secs: 4,
     frames: [P({ th: [330, 230], sh: [262, 188], ft: [0, 206], torso: 60, head: 60, ua: [274, 276], fa: [274, 276] }), P({ th: [330, 230], sh: [262, 188], ft: [0, 206], torso: 64, head: 80, ua: [96, 276], fa: [96, 276] })],
@@ -62,8 +83,9 @@ export const MOVES = {
 
 // Pick a move from the exercise name when Tanya hasn't chosen one.
 const KEYWORDS = [
+  [/calf/i, "calf"], [/curl/i, "curl"], [/mountain/i, "mountain"], [/crunch|sit[\s-]?up/i, "crunch"], [/high knee|skip|jog|march/i, "highknees"],
   [/swing/i, "swing"], [/dead\s?bug/i, "deadbug"], [/bridge|thrust/i, "bridge"], [/push[\s-]?up|press[\s-]?up/i, "pushup"],
-  [/plank|shoulder tap|mountain/i, "plank"], [/row/i, "row"], [/overhead|shoulder press|military|press/i, "press"],
+  [/plank|shoulder tap/i, "plank"], [/row/i, "row"], [/overhead|shoulder press|military|press/i, "press"],
   [/lunge|split squat|step[\s-]?up/i, "lunge"], [/squat|sit to stand/i, "squat"], [/deadlift|rdl|hinge|good morning/i, "hinge"],
   [/stretch|greatest|reach|mobility/i, "stretch"],
 ];

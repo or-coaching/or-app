@@ -108,6 +108,14 @@ function seed() {
   [[CLIENT, -2, 9, "Finished the full body session. Squats felt strong today!"], [TRAINER, -2, 10, "Love that. 14 kg for 12 reps is a big jump from where you started. Let's push the deadlifts next."],
    [TRAINER, -1, 17, "New workout is ready for tomorrow: Lower body B."], [CLIENT, -1, 18, "Thanks coach, I'll do it before work."]]
     .forEach(([sender_id, off, h, body]) => db.messages.push({ id: uid(), client_id: CLIENT, sender_id, body, read_at: sender_id === CLIENT ? at(off, h + 1) : null, created_at: at(off, h) }));
+  // A saved workout in the coach's workout library
+  const pick = (n) => db.exercises.find((e) => e.name === n);
+  db.workout_templates.push({ id: uid(), trainer_id: TRAINER, name: "Lower body A", notes: "Controlled tempo, 2 reps in reserve.", created_at: at(-30), items: [
+    { exercise_id: pick("World's greatest stretch").id, section: "Warm-up", target_sets: 1, target_reps: 5, rest_seconds: 15 },
+    { exercise_id: pick("Goblet squat").id, section: "Main set", target_sets: 3, target_reps: 10, target_weight_kg: 12, rest_seconds: 60 },
+    { exercise_id: pick("Dumbbell Romanian deadlift").id, section: "Main set", target_sets: 3, target_reps: 10, target_weight_kg: 10, rest_seconds: 60 },
+    { exercise_id: pick("Reverse lunge").id, section: "Main set", target_sets: 3, target_reps: 10, rest_seconds: 45 },
+    { exercise_id: pick("Banded glute bridge").id, section: "Cool-down", target_sets: 1, target_seconds: 40 } ] });
   // Health checks: Thandi all clear, Jess flagged a knee and waits for clearance
   const hq = (yes) => Object.fromEntries(["heart", "chest", "dizzy", "chronic", "meds", "joint", "pregnant", "supervised"].map((k) => [k, yes.includes(k)]));
   db.health_screens.push({ client_id: CLIENT, answers: hq([]), flags: 0, details: null, emergency_name: "Sizwe Mokoena", emergency_phone: "082 555 0101", waiver_accepted_at: at(-40), health_consent_at: at(-40), cleared_at: null, updated_at: at(-40) });
@@ -129,6 +137,7 @@ const DEFAULTS = {
   challenge_completions: () => ({ created_at: new Date().toISOString() }),
   workouts: () => ({ created_at: new Date().toISOString(), completed_at: null }),
   exercises: () => ({ created_at: new Date().toISOString(), cues: [], equipment: [] }),
+  workout_templates: () => ({ created_at: new Date().toISOString(), items: [] }),
 };
 
 // Attach related rows the way Supabase's nested selects do.
