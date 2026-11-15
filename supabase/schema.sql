@@ -462,3 +462,10 @@ create policy "clients read their trainer's library" on public.exercises for sel
 -- EXERCISE TYPES (warm-up, cool-down, chill set, or the coach's own)
 -- =====================================================================
 alter table public.exercises add column if not exists categories text[] not null default '{}';
+
+-- =====================================================================
+-- ANIMATED DEMOS, WORKOUT SECTIONS, CLIENT WEIGHTS
+-- =====================================================================
+alter table public.exercises add column if not exists demo_move text;            -- animation used until a video is uploaded
+alter table public.workout_items add column if not exists section text;          -- 'Warm-up', 'Main set', 'Cool-down'
+alter table public.profiles add column if not exists weights_note text check (length(weights_note) <= 300);  -- weights the client has
