@@ -34,6 +34,10 @@ export const CONFIG = {
   // Exercise types shown as sections in the Library. Tanya can also add her own in the app.
   EXERCISE_TYPES: ["Warm-up", "Main set", "Cool-down", "Chill set", "Mobility", "Stretch", "Finisher"],
 
+  // Shown on the health check every client completes before training.
+  // Have a South African attorney check this wording before launch. Leave "" to use the default.
+  WAIVER: "",
+
   // Her own photos (portrait, 1200px+). Put them in the images folder.
   // Leave "" and the app uses a branded background instead.
   PHOTOS: {

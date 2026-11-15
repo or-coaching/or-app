@@ -2,7 +2,10 @@
 // Drafts short coaching cues for an exercise using Claude.
 // The trainer reviews and edits them before clients ever see them.
 //
+// Only the signed-in coach can use it, so nobody else can run up the AI bill.
 // Secret needed (Supabase > Edge Functions > Secrets): ANTHROPIC_API_KEY
+
+import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -14,6 +17,14 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
 
   try {
+    const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!, {
+      global: { headers: { Authorization: req.headers.get("Authorization") ?? "" } },
+    });
+    const { data: { user } } = await sb.auth.getUser();
+    if (!user) return json({ error: "Please sign in." }, 401);
+    const { data: me } = await sb.from("profiles").select("role").eq("id", user.id).single();
+    if (me?.role !== "trainer") return json({ error: "Only the coach can use this." }, 403);
+
     const { name, muscle_group, equipment, instructions } = await req.json();
     if (!name || typeof name !== "string" || name.length > 120) {
       return json({ error: "Exercise name is required." }, 400);

@@ -1,5 +1,5 @@
 import { CONFIG, BRAND } from "./config.js";
-import { FOODS, WEEKLY_BUFFER, RECIPES, calcPoints, dailyBudget } from "./nutrition.js";
+import { FOODS, WEEKLY_BUFFER, RECIPES, calcPoints, dailyKcal, waterGoal, GLASS_ML, WATER_TIPS } from "./nutrition.js";
 import { CHALLENGES, TIPS, BADGES, badgeStats, medal, pickForDate, ROULETTE_UNLOCK_DAYS } from "./engage.js";
 import { MOVES, moveFor, moveSvg, startMoves } from "./moves.js";
 import { STARTER } from "./starter.js";
@@ -48,6 +48,11 @@ const SWAP_HINTS = {
 let session = null;
 let me = null;
 let myTrainer = null;
+let myScreen = null;   // the client's health check
+let restT = null;      // rest timer between sets
+// Remember an invite code from a shared link (?ref=CODE) until sign-up.
+try { const r = new URLSearchParams(location.search).get("ref"); if (r) localStorage.setItem("or-ref", r.replace(/[^a-z0-9]/gi, "").toUpperCase().slice(0, 12)); } catch {}
+const refCode = () => { try { return localStorage.getItem("or-ref") || ""; } catch { return ""; } };
 let visitLogged = null;
 let chatChannel = null;
 let charts = [];
@@ -270,14 +275,15 @@ sb.auth.onAuthStateChange((event, s) => {
 async function loadMe() {
   const { data } = await sb.from("profiles").select("*").eq("id", session.user.id).single();
   me = data;
-  myTrainer = null;
+  myTrainer = null; myScreen = null;
+  if (me?.role === "client") ({ data: [myScreen = null] = [] } = await sb.from("health_screens").select("*").eq("client_id", me.id));
   if (me?.trainer_id) ({ data: myTrainer } = await sb.from("profiles").select("id, full_name, library_free, avatar_path").eq("id", me.trainer_id).single());
 }
 
 $("#meBtn").onclick = () => go("me");
 $("#signOut").onclick = async () => { await sb.auth.signOut(); go(""); };
 
-function authView(mode = "in") {
+function authView(mode = refCode() ? "up" : "in") {
   $("#topbar").hidden = true; $("#tabbar").hidden = true;
   render(`<div class="auth-hero">${CONFIG.PHOTOS.welcome ? `<img class="photo" src="${esc(CONFIG.PHOTOS.welcome)}" alt="">` : forms(7, { w: 400, h: 380, scale: 1.15 })}
     <div><img src="icons/logo.png" class="logo-big" alt="${esc(CONFIG.APP_NAME)}">
@@ -287,6 +293,7 @@ function authView(mode = "in") {
       <div class="grid2"><button id="demoClient">I'm a client</button><button class="secondary" id="demoCoach">I'm the coach</button></div></div>` : ""}
     <div class="tabs"><button data-m="in" class="${mode === "in" ? "active" : ""}">Sign in</button><button data-m="up" class="${mode === "up" ? "active" : ""}">Create account</button></div>
     <form id="authForm" class="card">
+      ${mode === "up" && refCode() ? `<p class="muted" style="margin:0 0 6px">A friend invited you. Welcome.</p>` : ""}
       ${mode === "up" ? `<label>Full name</label><input name="name" required autocomplete="name">` : ""}
       <label>Email</label><input name="email" type="email" required autocomplete="email">
       <label>Password</label><input name="password" type="password" minlength="8" required autocomplete="${mode === "up" ? "new-password" : "current-password"}">
@@ -312,10 +319,11 @@ function authView(mode = "in") {
     if (mode === "up") {
       const { data, error } = await sb.auth.signUp({
         email: f.email.value, password: f.password.value,
-        options: { data: { full_name: f.name.value, popia_consent: "true" }, emailRedirectTo: location.origin + location.pathname },
+        options: { data: { full_name: f.name.value, popia_consent: "true", ref: refCode() }, emailRedirectTo: location.origin + location.pathname },
       });
       btn.disabled = false;
       if (fail(error)) return;
+      try { localStorage.removeItem("or-ref"); } catch {}
       if (!data.session) render(`<div class="auth card"><h2>Check your email</h2><p>We sent a confirmation link to <b>${esc(f.email.value)}</b>. Tap it, then come back and sign in.</p><button class="block" onclick="location.reload()">Back to sign in</button></div>`);
     } else {
       const { error } = await sb.auth.signInWithPassword({ email: f.email.value, password: f.password.value });
@@ -352,10 +360,12 @@ async function unreadCount() {
 
 async function route() {
   if (chatChannel) { sb.removeChannel(chatChannel); chatChannel = null; }
+  clearInterval(restT); $("#rest")?.remove();
   if (!session) return authView();
   if (!me) { await loadMe(); if (!me) return render(`<div class="empty">Setting up your profile… refresh in a moment.</div>`); }
 
   const [page, a, b] = location.hash.replace(/^#\/?/, "").split("/");
+  if (me.role === "client") flushQ();
   if (me.role === "client" && me.trainer_id && visitLogged !== today()) {
     visitLogged = today();
     await sb.from("checkins").upsert({ client_id: me.id, checkin_date: today() }, { onConflict: "client_id,checkin_date", ignoreDuplicates: true });
@@ -364,11 +374,14 @@ async function route() {
   const badge = unread > 0;
 
   if (me.role === "trainer") {
-    tabs([["clients", "clients", "Clients"], ["library", "library", "Library"], ["inbox", "chat", "Chat", badge], ["me", "settings", "Settings"]]);
-    const views = { clients: trainerClients, client: () => trainerClient(a), builder: () => workoutBuilder(a, b), photos: () => photosView(a),
+    tabs([["dash", "home", "Today"], ["clients", "clients", "Clients"], ["library", "library", "Library"], ["inbox", "chat", "Chat", badge], ["me", "settings", "Settings"]]);
+    const views = { dash: trainerDash, clients: trainerClients, client: () => trainerClient(a), builder: () => workoutBuilder(a, b), photos: () => photosView(a),
+      templates: templatesView, template: () => assignView(a),
       library: trainerLibrary, exercise: () => exerciseEditor(a), inbox: trainerInbox, chat: () => chatView(a), me: profileView };
-    return (views[page] || trainerClients)();
+    return (views[page] || trainerDash)();
   }
+
+  if (!myScreen || page === "health") return healthView();
 
   if (!me.trainer_id) {
     tabs([["home", "home", "Home"], ...(tracksNut() ? [["food", "food", "Food"]] : []), ["me", "settings", "Profile"]]);
@@ -384,13 +397,67 @@ async function route() {
   tabs([["home", "home", "Today"], ...(tracksEx() ? [["workouts", "train", "Train"]] : []), ...(tracksNut() ? [["food", "food", "Food"]] : []),
     ["library", "library", "Library"], ["chat", "chat", "Coach", badge]], true);
   const views = { home: clientHome, food: () => foodView(a), log: () => logView(a), passes: passesView,
-    roulette: rouletteView, badges: badgesView, recipe: () => recipeView(a), photos: () => photosView(), workouts: clientWorkouts, workout: () => workoutView(a), progress: () => progressView(me.id),
+    roulette: rouletteView, badges: badgesView, recipe: () => recipeView(a), photos: () => photosView(), water: waterView, workouts: clientWorkouts, workout: () => workoutView(a), progress: () => progressView(me.id),
     library: clientLibrary, ex: () => clientExercise(a), chat: () => chatView(me.id), me: profileView };
   return (views[page] || clientHome)();
 }
 window.addEventListener("hashchange", route);
 
 // ================================================================ CLIENT
+// Health check before training. Wording is adapted from common pre-exercise screening questions.
+const HEALTH_QS = [
+  ["heart", "Has a doctor ever told you that you have a heart condition or high blood pressure?"],
+  ["chest", "Do you get pain or pressure in your chest at rest, during daily activities or when you exercise?"],
+  ["dizzy", "Do you lose your balance because of dizziness, or have you fainted in the last 12 months?"],
+  ["chronic", "Do you have another ongoing medical condition, such as diabetes, asthma or epilepsy?"],
+  ["meds", "Are you taking prescribed medication for an ongoing condition?"],
+  ["joint", "Do you have a bone, joint or muscle problem (back, knee, hip, shoulder) that exercise could make worse?"],
+  ["pregnant", "Are you pregnant, or have you had a baby in the last 6 months?"],
+  ["supervised", "Has a doctor ever said you should only exercise under medical supervision?"],
+];
+const DEFAULT_WAIVER = "Exercise carries some risk of injury. By training with my coach I agree to: answer the health questions honestly and tell my coach if anything changes; stop and tell my coach if I feel pain, dizziness or chest discomfort, or feel unwell; train within my own limits and follow my coach's guidance on technique and load. Guidance in this app does not replace advice from my doctor.";
+async function healthView() {
+  const h = myScreen; const a = h?.answers || {};
+  $("#topbar").hidden = false; $("#tabbar").hidden = !h;
+  render(`${h ? `<button class="back" onclick="location.hash='#/me'">Back to profile</button>` : ""}
+    <h1>${h ? "My health check" : "Before you start"}</h1>
+    <p class="muted">${h ? "Update this whenever something changes, such as a new injury, medication or pregnancy." : "A one-minute health check so your coach can keep your training safe. Only you and your coach can see it."}</p>
+    <form id="hs"><div class="card"><h3>Health questions</h3>
+      ${HEALTH_QS.map(([k, q]) => `<fieldset class="yn"><legend>${q}</legend>
+        <label><input type="radio" name="${k}" value="no" required ${a[k] === false ? "checked" : ""}><span>No</span></label>
+        <label><input type="radio" name="${k}" value="yes" ${a[k] === true ? "checked" : ""}><span>Yes</span></label></fieldset>`).join("")}
+      <label for="hsd">Anything else your coach should know?</label>
+      <textarea id="hsd" name="details" maxlength="1000" placeholder="Optional: injuries, operations, conditions or medication">${esc(h?.details || "")}</textarea></div>
+    <div class="card"><h3>Emergency contact</h3><div class="grid2">
+      <div><label for="hen">Name</label><input id="hen" name="en" required maxlength="120" autocomplete="off" value="${esc(h?.emergency_name || "")}"></div>
+      <div><label for="hep">Phone</label><input id="hep" name="ep" type="tel" required maxlength="40" autocomplete="off" value="${esc(h?.emergency_phone || "")}"></div></div>
+      <p class="muted" style="margin:8px 0 0">Only your coach sees this. Let the person know you've listed them.</p></div>
+    <div class="card"><h3>Agreement</h3><p class="waiver">${esc(CONFIG.WAIVER || DEFAULT_WAIVER)}</p>
+      <label class="check"><input type="checkbox" name="w" required ${h ? "checked" : ""}><span>I've read and agree to the above.</span></label>
+      <label class="check"><input type="checkbox" name="c" required ${h ? "checked" : ""}><span>I consent to my coach collecting and using my health information to plan safe training for me. Only my coach and I can see it, and I can ask for it to be deleted.</span></label></div>
+    <button class="block">${h ? "Save changes" : "Save and continue"}</button></form>`);
+  $("#hs").onsubmit = async (e) => {
+    e.preventDefault(); const f = e.target; const now = new Date().toISOString();
+    const answers = Object.fromEntries(HEALTH_QS.map(([k]) => [k, f[k].value === "yes"]));
+    const row = { client_id: me.id, answers, details: f.details.value.trim() || null, emergency_name: f.en.value.trim(), emergency_phone: f.ep.value.trim(),
+      waiver_accepted_at: h?.waiver_accepted_at || now, health_consent_at: h?.health_consent_at || now };
+    const { data, error } = await sb.from("health_screens").upsert(row, { onConflict: "client_id" }).select().single();
+    if (fail(error)) return;
+    const yes = Object.values(answers).filter(Boolean).length;
+    const changed = !h || JSON.stringify(h.answers) !== JSON.stringify(answers);
+    myScreen = { ...row, ...data, flags: data?.flags ?? yes };
+    if (me.trainer_id && changed) await sb.from("messages").insert({ client_id: me.id, sender_id: me.id,
+      body: yes ? `I've ${h ? "updated" : "completed"} my health check and answered yes to ${yes} ${yes === 1 ? "question" : "questions"}.` : `I've ${h ? "updated" : "completed"} my health check. All clear.` });
+    if (yes && changed) return render(`<div class="card"><h2>Thanks for being honest</h2>
+      <p>You answered yes to ${yes} ${yes === 1 ? "question" : "questions"}. Please check with your doctor before you start training hard. Your coach can see your answers and will chat to you about what's safe in the meantime.</p>
+      <button class="block" onclick="location.hash='#/home'">Continue</button></div>`);
+    toast("Health check saved"); go("home");
+  };
+}
+function clearanceBanner() {
+  if (!myScreen?.flags || myScreen.cleared_at) return "";
+  return `<div class="card banner"><b>Check with your doctor first</b><p class="muted" style="margin:4px 0 0">You answered yes on your health check. Take it easy until your coach confirms you're cleared to train. <a href="#/health">Review my answers</a></p></div>`;
+}
 // Everything that counts as "showing up": sets, activities, finished workouts, daily challenges.
 async function loadEngagement() {
   const [logs, { data: acts }, { data: done }, { data: ch }, { data: metrics }, { data: cks }, food] = await Promise.all([
@@ -476,7 +543,7 @@ async function clientHome() {
     sb.from("workouts").select("*").eq("client_id", me.id).is("completed_at", null).order("scheduled_date", { nullsFirst: false }).limit(3),
     me.photos_opt_in ? sb.from("progress_photos").select("id").eq("client_id", me.id).gte("taken_on", weekStart()) : Promise.resolve({ data: [] }),
   ]);
-  const food = tracksNut() ? await foodSummary() : null;
+  const [food, water] = await Promise.all([tracksNut() ? foodSummary() : null, waterToday()]);
   const next = wos?.[0];
   const first = me.full_name?.split(" ")[0] || "";
   const { stats, activeDays } = eng; const st = stats.streak;
@@ -522,11 +589,13 @@ async function clientHome() {
       <a href="#/progress">${ICON.progress} Progress</a>
       ${CONFIG.INSTAGRAM_URL ? `<a href="${esc(CONFIG.INSTAGRAM_URL)}" target="_blank" rel="noopener">${ICON.ig} Instagram</a>` : ""}
     </nav>
+    ${clearanceBanner()}
     ${rewardCard}
     ${checkinCard(eng.checkins.find((c) => c.checkin_date === today() && c.energy != null))}
     <div class="card"><p class="muted" style="margin:0 0 6px">Today's challenge</p>
       <div class="challenge"><span class="q">${esc(challenge)}</span>
       ${chDone ? `<button class="small done" disabled>Done</button>` : `<button class="small" id="chDone">Done it</button>`}</div></div>
+    ${waterCard(water)}
     ${food ? foodCard(food) : ""}
     ${(() => { const needW = !ws.some((m) => m.metric_date >= weekStart()); const needP = me.photos_opt_in && !(phWeek || []).length;
       return needW || needP ? `<div class="card weekly"><h3>Weekly progress</h3>
@@ -549,6 +618,7 @@ async function clientHome() {
     </div>
     <div class="card tip"><p class="muted" style="margin:0 0 4px">Coach's tip</p><p style="margin:0">${esc(tip)}</p></div>`);
   bindCheckin(clientHome);
+  bindWater(water, clientHome);
   celebrateRewards(rewards);
   $("#chDone")?.addEventListener("click", async () => {
     const { error } = await sb.from("challenge_completions").insert({ client_id: me.id, challenge_date: today(), challenge });
@@ -557,10 +627,42 @@ async function clientHome() {
   celebrate(eng.earned);
 }
 
+// Build a branded 4:5 before-and-after image, with faces cropped off by default.
+async function makePost(before, after, hideFaces) {
+  const load = async (r) => { const { data, error } = await sb.storage.from("progress-photos").download(r.path); if (error) throw error; return createImageBitmap(data); };
+  const [a, b] = await Promise.all([load(before), load(after)]);
+  await document.fonts?.ready;
+  const W = 1080, H = 1350, c = document.createElement("canvas"); c.width = W; c.height = H; const g = c.getContext("2d");
+  g.fillStyle = "#171A18"; g.fillRect(0, 0, W, H);
+  g.strokeStyle = "rgba(156,181,154,.16)"; g.lineWidth = 70; g.beginPath(); g.arc(W - 90, 150, 200, 0, Math.PI * 2); g.stroke();
+  g.fillStyle = "#9CB59A"; g.beginPath(); g.arc(120, H - 120, 18, 0, Math.PI * 2); g.fill();
+  const pw = 474, ph = 720, y = 250;
+  const put = (img, x) => {
+    const top = hideFaces ? img.height * 0.24 : 0; const sh = img.height - top, sw = img.width, ratio = pw / ph;
+    let cw = sw, ch = sw / ratio; if (ch > sh) { ch = sh; cw = sh * ratio; }
+    const cx = (img.width - cw) / 2, cy = hideFaces ? top : top + (sh - ch) / 2;
+    g.save(); g.beginPath(); g.roundRect(x, y, pw, ph, 28); g.clip(); g.drawImage(img, cx, cy, cw, ch, x, y, pw, ph); g.restore();
+  };
+  put(a, 44); put(b, W - 44 - pw);
+  g.fillStyle = "#EFE8DC"; g.font = "700 96px Fraunces, Georgia, serif"; g.fillText("Or", 44, 160);
+  const ow = g.measureText("Or").width; g.fillStyle = "#9CB59A"; g.fillText(".", 44 + ow, 160);
+  g.font = "600 30px 'Instrument Sans', system-ui, sans-serif"; g.fillStyle = "#9BA49A";
+  g.fillText(`BEFORE  ${fmtDate(before.taken_on).toUpperCase()}`, 44, y + ph + 54);
+  g.fillText(`AFTER  ${fmtDate(after.taken_on).toUpperCase()}`, W - 44 - pw, y + ph + 54);
+  const weeks = Math.max(1, Math.round((new Date(after.taken_on) - new Date(before.taken_on)) / 6048e5));
+  g.fillStyle = "#EFE8DC"; g.font = "700 76px Fraunces, Georgia, serif"; g.fillText(`${weeks} ${weeks === 1 ? "week" : "weeks"} of showing up.`, 44, y + ph + 170);
+  g.font = "500 34px 'Instrument Sans', system-ui, sans-serif"; g.fillStyle = "#9BA49A";
+  g.fillText((CONFIG.INSTAGRAM_URL.match(/instagram\.com\/([^/?]+)/)?.[1] ? "@" + CONFIG.INSTAGRAM_URL.match(/instagram\.com\/([^/?]+)/)[1] : CONFIG.APP_NAME), 160, H - 108);
+  const blob = await new Promise((res) => c.toBlob(res, "image/png"));
+  const file = new File([blob], "or-progress.png", { type: "image/png" });
+  try { if (navigator.canShare?.({ files: [file] })) return await navigator.share({ files: [file] }); } catch { return; }
+  const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = file.name; link.click();
+}
+
 async function photosView(clientId) {
   const own = !clientId || clientId === me.id; const cid = own ? me.id : clientId;
   const [{ data: who }, { data: rows }, { data: metrics }] = await Promise.all([
-    own ? Promise.resolve({ data: me }) : sb.from("profiles").select("id, full_name, photos_opt_in").eq("id", cid).single(),
+    own ? Promise.resolve({ data: me }) : sb.from("profiles").select("id, full_name, photos_opt_in, share_consent_at").eq("id", cid).single(),
     sb.from("progress_photos").select("*").eq("client_id", cid).order("taken_on"),
     sb.from("body_metrics").select("metric_date, weight_kg").eq("client_id", cid).order("metric_date"),
   ]);
@@ -580,12 +682,20 @@ async function photosView(clientId) {
       ${[["Before", before], ["After", after]].map(([lab, r]) => `<figure><img src="${esc(url[r.path] || "")}" alt="${lab}: ${esc(r.angle)} photo from ${fmtDate(r.taken_on)}">
         <figcaption><b>${lab}</b> ${fmtDate(r.taken_on)}${weightOn(r.taken_on) ? `, ${weightOn(r.taken_on)} kg` : ""}</figcaption></figure>`).join("")}</div>
       ${weightOn(before.taken_on) && weightOn(after.taken_on) ? `<p class="muted" style="margin:10px 0 0">Change: <b class="${weightOn(after.taken_on) <= weightOn(before.taken_on) ? "vs up" : "vs down"}">${(weightOn(after.taken_on) - weightOn(before.taken_on)).toFixed(1)} kg</b> over ${Math.max(1, Math.round((new Date(after.taken_on) - new Date(before.taken_on)) / 6048e5))} weeks</p>` : ""}
-      <p class="muted" style="margin:8px 0 0">Tap any photo below to set it as before or after.</p></div>` : "";
+      <p class="muted" style="margin:8px 0 0">Tap any photo below to set it as before or after.</p>
+      ${own || who?.share_consent_at ? `<label class="check" style="margin-top:10px"><input type="checkbox" id="hideF" checked><span>Hide faces (crop the top of each photo)</span></label>
+        <button type="button" class="secondary block" id="mkPost" style="margin-top:8px">${ICON.ig} Make an Instagram post</button>`
+        : `<p class="muted" style="margin:10px 0 0">To post this on Instagram, ${esc(who.full_name.split(" ")[0])} needs to tick "OK to share" in their profile.</p>`}</div>` : "";
     $("#phMain").innerHTML = `${cmp}
       ${weeks.slice().reverse().map((wk) => `<div class="sec"><h2>Week of ${fmtDate(wk)}</h2></div><div class="ph-grid">${list.filter((r) => weekStart(new Date(r.taken_on)) === wk).map((r) =>
         `<div class="ph-item"><button type="button" class="ph-pick" data-ph="${r.id}"><img src="${esc(url[r.path] || "")}" alt="${esc(r.angle)} photo from ${fmtDate(r.taken_on)}" loading="lazy"></button>
           <div class="row between"><span class="muted">${esc(r.angle)}, ${fmtDate(r.taken_on)}</span>${own ? `<button type="button" class="small secondary" data-phdel="${r.id}" aria-label="Delete photo">${ICON.close}</button>` : ""}</div></div>`).join("")}</div>`).join("")
       || `<div class="empty">${own ? "No photos yet. Add your first one above. Same time of day, same spot and same angle each week gives the fairest comparison." : "No photos yet."}</div>`}`;
+    $("#mkPost")?.addEventListener("click", async (e) => {
+      e.currentTarget.disabled = true; toast("Making your post…");
+      try { await makePost(before, after, $("#hideF").checked); } catch (err) { toast("Couldn't make the image. Try again."); console.error(err); }
+      e.currentTarget.disabled = false;
+    });
     $$("[data-ph]").forEach((b) => (b.onclick = () => {
       const r = list.find((x) => x.id === b.dataset.ph);
       if (r.taken_on <= before.taken_on || r === before) before = r; else after = r;
@@ -695,12 +805,12 @@ async function recipeView(i) {
   const r = RECIPES[Number(i)]; if (!r) return go("food");
   render(`<button class="back" onclick="history.back()">Back</button>
     <h1>${esc(r.name)}</h1>
-    <p><span class="chip on">${r.points} points a serving</span> <span class="chip">${r.minutes} min</span> <span class="chip">Serves ${r.serves}</span></p>
+    <p><span class="chip on">${kcalMode() ? `${r.kcal} kcal` : `${r.points} points`} a serving</span> <span class="chip">${r.minutes} min</span> <span class="chip">Serves ${r.serves}</span></p>
     <div class="card"><h3>You'll need</h3><ul style="padding-left:20px;margin:6px 0 0">${r.ingredients.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>
     <div class="card"><h3>Method</h3><ol class="steps">${r.steps.map((x) => `<li>${esc(x)}</li>`).join("")}</ol></div>
-    ${tracksNut() && me.daily_points ? `<button class="block" id="logR">Log one serving</button>` : ""}`);
+    ${tracksNut() && foodBudget() ? `<button class="block" id="logR">Log one serving</button>` : ""}`);
   $("#logR")?.addEventListener("click", async () => {
-    const { error } = await sb.from("food_logs").insert({ client_id: me.id, log_date: today(), meal: defaultMeal(), food_name: r.name, servings: 1, points: r.points });
+    const { error } = await sb.from("food_logs").insert({ client_id: me.id, log_date: today(), meal: defaultMeal(), food_name: r.name, servings: 1, points: r.points, kcal: r.kcal });
     if (!fail(error)) { toast("Logged to today's food"); go("food"); }
   });
 }
@@ -760,6 +870,41 @@ async function clientWorkouts() {
     <div class="card"><h3>Completed</h3>${done.map(item).join("") || `<div class="empty">Your finished sessions will show here.</div>`}</div>`);
 }
 
+// ---------------------------------------------------------------- offline sets
+// Gyms often have poor signal: sets logged offline wait on the phone and sync later.
+const qKey = () => "or-q-" + me.id;
+function readQ() { try { return JSON.parse(localStorage.getItem(qKey())) || []; } catch { return []; } }
+function writeQ(q) { try { localStorage.setItem(qKey(), JSON.stringify(q)); } catch {} }
+const isNetErr = (e) => !navigator.onLine || /fetch|network|load failed/i.test(e?.message || "");
+async function flushQ() {
+  if (!me || !navigator.onLine) return; const q = readQ(); if (!q.length) return;
+  const left = [];
+  for (const rec of q) { const { error } = await sb.from("set_logs").insert(rec); if (error && isNetErr(error)) left.push(rec); }
+  writeQ(left);
+  const n = q.length - left.length; if (n) toast(`${n} ${n === 1 ? "set" : "sets"} saved offline ${n === 1 ? "has" : "have"} synced`);
+}
+window.addEventListener("online", () => flushQ());
+
+function startRest(sec, label) {
+  clearInterval(restT); $("#rest")?.remove();
+  const fmt = (x) => `${Math.floor(x / 60)}:${String(x % 60).padStart(2, "0")}`;
+  let left = sec;
+  document.body.insertAdjacentHTML("beforeend", `<div class="rest" id="rest" role="timer" aria-live="off">
+    <div class="grow"><span class="muted">Rest${label ? `, then ${esc(label)}` : ""}</span><b id="restN">${fmt(left)}</b></div>
+    <button class="small secondary" id="restPlus" aria-label="Add 15 seconds">+15s</button><button class="small" id="restSkip">Skip</button></div>`);
+  const end = (done) => { clearInterval(restT); $("#rest")?.remove(); if (done) { try { navigator.vibrate?.([200, 100, 200]); } catch {} toast("Rest done. Next set."); } };
+  $("#restPlus").onclick = () => { left += 15; $("#restN").textContent = fmt(left); };
+  $("#restSkip").onclick = () => end(false);
+  restT = setInterval(() => { left--; if (left <= 0) return end(true); const n = $("#restN"); if (n) n.textContent = fmt(left); }, 1000);
+}
+function celebratePB(name, what) {
+  if ($("#cel")) return;
+  document.body.insertAdjacentHTML("beforeend", `<div class="celebrate" id="cel" role="dialog" aria-label="New personal best"><div class="box">
+    ${medal({ glyph: "PB" }, true, 130)}<h2>New personal best</h2><p class="muted">${esc(what)} on ${esc(name)}. That's your best yet.</p>
+    <button class="block" id="celOk">Keep going</button></div></div>`);
+  $("#celOk").onclick = () => $("#cel").remove();
+}
+
 async function workoutView(id) {
   const [{ data: w, error }, logs, { data: library }] = await Promise.all([
     sb.from("workouts").select("*, workout_items(*, exercises(*))").eq("id", id).single(),
@@ -769,17 +914,31 @@ async function workoutView(id) {
   if (fail(error) || !w) return render(`<div class="empty">Workout not found.</div>`);
   const items = (w.workout_items || []).sort((a, b) => a.position - b.position);
   const thisLogs = logs.filter((l) => items.some((i) => i.id === l.workout_item_id));
+  const queued = readQ();
+  // Best so far per exercise, from earlier sessions, to spot personal bests as they happen.
+  const bestW = {}, bestR = {};
+  logs.filter((l) => !items.some((i) => i.id === l.workout_item_id)).forEach((l) => {
+    const e = l.workout_items?.exercise_id; if (!e) return;
+    if (l.weight_kg) bestW[e] = Math.max(bestW[e] || 0, l.weight_kg); else if (l.reps) bestR[e] = Math.max(bestR[e] || 0, l.reps);
+  });
 
   const cards = await Promise.all(items.map(async (it) => {
     const ex = it.exercises; const url = await videoUrl(ex.video_path);
     const prev = logs.filter((l) => l.workout_items?.exercise_id === ex.id && l.workout_item_id !== it.id);
     const last = prev[prev.length - 1];
-    const done = thisLogs.filter((l) => l.workout_item_id === it.id);
+    const done = [...thisLogs.filter((l) => l.workout_item_id === it.id), ...queued.filter((q) => q.workout_item_id === it.id).map((q) => ({ ...q, id: "queued" }))];
     const nSets = Math.max(it.target_sets || 3, done.length);
     const timed = !!it.target_seconds && !it.target_reps;
+    // Ready to go heavier? Every set at or above the target reps last session.
+    const lastId = last?.workout_item_id; const lastSess = prev.filter((l) => l.workout_item_id === lastId);
+    const lastTarget = lastSess[0]?.workout_items?.target_reps || it.target_reps;
+    const topW = Math.max(0, ...lastSess.map((l) => l.weight_kg || 0));
+    const ready = !timed && lastTarget && topW > 0 && lastSess.length >= Math.min(3, it.target_sets || 3) && lastSess.every((l) => (l.reps || 0) >= lastTarget)
+      && !(it.target_weight_kg > topW);
+    const step = topW < 10 ? 1 : 2;
     const rows = Array.from({ length: nSets }, (_, i) => {
       const d = done.find((l) => l.set_number === i + 1);
-      return `<div class="set-row ${d ? "done" : ""}" data-item="${it.id}" data-set="${i + 1}" data-log="${d?.id || ""}">
+      return `<div class="set-row ${d ? "done" : ""}${d?.id === "queued" ? " queued" : ""}" data-item="${it.id}" data-set="${i + 1}" data-log="${d?.id || ""}">
         <span class="n">${i + 1}</span>
         ${timed ? `<input type="number" inputmode="numeric" placeholder="sec" value="${d?.seconds ?? it.target_seconds ?? ""}" data-f="seconds">`
           : `<input type="number" inputmode="numeric" placeholder="reps" value="${d?.reps ?? it.target_reps ?? ""}" data-f="reps">`}
@@ -791,6 +950,7 @@ async function workoutView(id) {
       ${demoHtml(ex, url)}
       <div class="target">Coach's target: <b>${esc(targetText(it))}</b>${it.notes ? `<div class="muted">${esc(it.notes)}</div>` : ""}
         ${last ? `<div class="muted">Last time: ${last.reps ?? last.seconds + "s"}${last.weight_kg ? " @ " + last.weight_kg + " kg" : ""}</div>` : ""}</div>
+      ${ready ? `<div class="nudge">${ICON.up} You hit every rep at ${topW} kg last time. If your form felt solid, try ${topW + step} kg today.</div>` : ""}
       ${ex.cues?.length ? `<div class="cues"><b>Form cues</b><ul>${ex.cues.map((c) => `<li>${esc(c)}</li>`).join("")}</ul></div>` : ""}
       ${swapHtml(swapSuggestions(ex, library || [], me.equipment))}
       <div class="set-row muted" style="margin-top:12px"><span class="n">Set</span><span>${timed ? "Seconds" : "Reps"}</span><span>kg</span><span></span></div>
@@ -808,30 +968,51 @@ async function workoutView(id) {
     ${w.completed_at ? `<div class="card" style="text-align:center"><span class="chip good">Completed ${fmtDate(w.completed_at)}</span></div>`
       : `<button class="block" id="finish">Finish workout</button>`}`);
 
+  const afterSet = (row, vals, fresh) => {
+    const it = items.find((i) => i.id === row.dataset.item); const ex = it.exercises;
+    const isPB = fresh && (vals.weight_kg ? bestW[ex.id] > 0 && vals.weight_kg > bestW[ex.id] : vals.reps && bestR[ex.id] > 0 && vals.reps > bestR[ex.id]);
+    if (vals.weight_kg) bestW[ex.id] = Math.max(bestW[ex.id] || 0, vals.weight_kg); else if (vals.reps) bestR[ex.id] = Math.max(bestR[ex.id] || 0, vals.reps);
+    if (isPB) celebratePB(ex.name, vals.weight_kg ? `${vals.weight_kg} kg` : `${vals.reps} reps`);
+    else if (it.target_weight_kg && vals.weight_kg > it.target_weight_kg) toast("Heavier than target. Strong!");
+    else if (it.target_reps && vals.reps > it.target_reps) toast("Extra reps. Nice work!");
+    else if (!fresh) toast(`Set ${row.dataset.set} updated`);
+    if (!fresh) return;
+    const rowsOf = $$(`.set-row[data-item="${it.id}"]`); const moreSets = rowsOf.some((r) => !r.classList.contains("done"));
+    const nextEx = items[items.indexOf(it) + 1]?.exercises?.name;
+    const rest = it.rest_seconds || (sectionOf(it) === "Main set" ? 60 : 20);
+    if (moreSets || nextEx) startRest(rest, moreSets ? `set ${rowsOf.findIndex((r) => !r.classList.contains("done")) + 1}` : nextEx);
+    else if (row.dataset.log !== "queued" && !isPB) toast("Last set logged. Tap Finish workout when you're done.");
+  };
+  const markDone = (row, btn, id) => { row.dataset.log = id; row.classList.add("done"); row.classList.toggle("queued", id === "queued"); btn.innerHTML = ICON.check; btn.classList.remove("secondary"); };
   const logSet = async (btn) => {
     const row = btn.closest(".set-row");
+    if (row.dataset.log === "queued") return toast("Saved on your phone. It'll sync when you're back online.");
     const vals = Object.fromEntries($$("input", row).map((i) => [i.dataset.f, num(i.value)]));
-    const rec = { workout_item_id: row.dataset.item, client_id: me.id, set_number: Number(row.dataset.set), ...vals };
+    const rec = { workout_item_id: row.dataset.item, client_id: me.id, set_number: Number(row.dataset.set), ...vals, logged_at: new Date().toISOString() };
+    const fresh = !row.dataset.log;
+    const queue = () => { writeQ([...readQ(), rec]); markDone(row, btn, "queued"); toast("No signal. Saved on your phone; it'll sync when you're back online."); afterSet(row, vals, true); };
+    if (fresh && !navigator.onLine) return queue();
     btn.disabled = true;
-    const q = row.dataset.log ? sb.from("set_logs").update(vals).eq("id", row.dataset.log).select().single()
+    const q = !fresh ? sb.from("set_logs").update(vals).eq("id", row.dataset.log).select().single()
       : sb.from("set_logs").insert(rec).select().single();
     const { data, error } = await q; btn.disabled = false;
+    if (error && fresh && isNetErr(error)) return queue();
     if (fail(error)) return;
-    row.dataset.log = data.id; row.classList.add("done"); btn.innerHTML = ICON.check; btn.classList.remove("secondary");
-    const it = items.find((i) => i.id === row.dataset.item);
-    if (it.target_weight_kg && vals.weight_kg > it.target_weight_kg) toast("Heavier than target — strong!");
-    else if (it.target_reps && vals.reps > it.target_reps) toast("Extra reps — nice work!");
-    else toast(`Set ${row.dataset.set} logged`);
+    markDone(row, btn, data.id);
+    afterSet(row, vals, fresh);
   };
   $$(".set-row[data-item] button").forEach((btn) => (btn.onclick = () => logSet(btn)));
   $$("[data-add]").forEach((b) => (b.onclick = () => {
     const rows = $$(`.set-row[data-item="${b.dataset.add}"]`); const lastRow = rows[rows.length - 1];
     const clone = lastRow.cloneNode(true); clone.dataset.set = rows.length + 1; clone.dataset.log = ""; clone.classList.remove("done");
     clone.querySelector(".n").textContent = rows.length + 1;
+    clone.classList.remove("queued");
     const btn = clone.querySelector("button"); btn.textContent = "Log"; btn.classList.add("secondary");
     lastRow.after(clone); btn.onclick = () => logSet(btn);
   }));
   $("#finish")?.addEventListener("click", async () => {
+    if (!navigator.onLine) return toast("You're offline. Your sets are saved on your phone. Tap Finish again once you have signal.");
+    await flushQ();
     const { error } = await sb.from("workouts").update({ completed_at: new Date().toISOString() }).eq("id", w.id);
     if (fail(error)) return;
     await sb.from("messages").insert({ client_id: me.id, sender_id: me.id, body: `Finished "${w.name}"` });
@@ -912,86 +1093,184 @@ async function clientExercise(id) {
       ${ex.instructions ? `<h3 style="margin-top:14px">How to</h3><p>${esc(ex.instructions)}</p>` : ""}</div>`);
 }
 
-// ================================================================ FOOD (points tracking)
+// ================================================================ FOOD (points or calories, the client chooses)
+const kcalMode = () => me?.nutrition_mode === "calories";
+const foodUnit = () => (kcalMode() ? "kcal" : "pts");
+const foodVal = (r) => (kcalMode() ? Number(r.kcal ?? Number(r.points) * 50) : Number(r.points));
+const foodBudget = () => (kcalMode() ? me.daily_kcal : me.daily_points) || 0;
 async function foodSummary(date = today()) {
   const ws = weekStart(new Date(date));
   const { data } = await sb.from("food_logs").select("*").eq("client_id", me.id).gte("log_date", ws).order("created_at");
-  const rows = data || []; const budget = me.daily_points || 0;
+  const rows = data || []; const budget = foodBudget();
   const dayRows = rows.filter((r) => r.log_date === date);
-  const used = dayRows.reduce((s, r) => s + Number(r.points), 0);
+  const used = Math.round(dayRows.reduce((s, r) => s + foodVal(r), 0));
   const byDay = {}; rows.forEach((r) => (byDay[r.log_date] = (byDay[r.log_date] || 0) + Number(r.points)));
-  const over = Object.entries(byDay).filter(([d]) => d <= date).reduce((s, [, v]) => s + Math.max(0, v - budget), 0);
-  return { date, budget, used, left: budget - used, buffer: Math.max(0, WEEKLY_BUFFER - over), dayRows };
+  const over = Object.entries(byDay).filter(([d]) => d <= date).reduce((s, [, v]) => s + Math.max(0, v - (me.daily_points || 0)), 0);
+  return { date, budget, used, left: budget - used, buffer: kcalMode() ? null : Math.max(0, WEEKLY_BUFFER - over), dayRows };
 }
 function foodCard(f) {
-  if (!f.budget) return `<div class="card"><h3>Nutrition</h3><p class="muted">Set your daily points to start tracking food.</p><button onclick="location.hash='#/food'">Set up</button></div>`;
+  if (!f.budget) return `<div class="card"><h3>Nutrition</h3><p class="muted">Choose points or calories to start tracking food.</p><button onclick="location.hash='#/food'">Set up</button></div>`;
   const pct = Math.min(100, Math.round((f.used / f.budget) * 100));
+  const k = kcalMode();
   return `<a class="card" href="#/food" style="display:block;color:inherit;text-decoration:none">
-    <div class="row between"><h3>Points today</h3><span class="muted">Weekly buffer ${f.buffer}</span></div>
-    <div class="row" style="align-items:baseline;gap:6px"><span class="stat">${f.left < 0 ? 0 : f.left}</span><span class="muted">of ${f.budget} left${f.left < 0 ? `, ${-f.left} from weekly buffer` : ""}</span></div>
+    <div class="row between"><h3>${k ? "Calories today" : "Points today"}</h3>${f.buffer != null ? `<span class="muted">Weekly buffer ${f.buffer}</span>` : ""}</div>
+    <div class="row" style="align-items:baseline;gap:6px"><span class="stat">${f.left < 0 ? 0 : f.left}</span><span class="muted">of ${f.budget}${k ? " kcal" : ""} left${f.left < 0 ? (k ? `, ${-f.left} kcal over` : `, ${-f.left} from weekly buffer`) : ""}</span></div>
     <div class="progress" style="margin-top:10px"><div style="width:${pct}%"></div></div></a>`;
+}
+
+// ---------------------------------------------------------------- water
+async function waterToday() {
+  const [{ data: w }, { data: acts }, { data: sets }, { data: m }] = await Promise.all([
+    sb.from("water_logs").select("ml").eq("client_id", me.id).eq("log_date", today()),
+    sb.from("activities").select("minutes").eq("client_id", me.id).eq("activity_date", today()),
+    sb.from("set_logs").select("id").eq("client_id", me.id).gte("logged_at", today()).limit(1),
+    sb.from("body_metrics").select("weight_kg").eq("client_id", me.id).not("weight_kg", "is", null).order("metric_date", { ascending: false }).limit(1),
+  ]);
+  const minutes = (acts || []).reduce((s, a) => s + (a.minutes || 0), 0) + ((sets || []).length ? 45 : 0);
+  const weight = m?.[0]?.weight_kg || null;
+  const auto = !me.water_goal_ml;
+  return { ml: w?.[0]?.ml || 0, goal: me.water_goal_ml || waterGoal({ weight, trainingMinutes: minutes }), auto, weight, minutes };
+}
+const litres = (ml) => `${(ml / 1000).toFixed(2).replace(/0$/, "").replace(/\.0$/, "")} L`;
+function waterAdvice(x) {
+  const h = new Date().getHours(); const pct = x.ml / x.goal;
+  if (pct >= 1) return "Goal reached. Keep sipping if it's hot or you train again today.";
+  if (h >= 12 && pct < (h - 7) / 14 - 0.15) return `You're a little behind for this time of day. Have a glass now and another with your next meal.`;
+  if (x.minutes) return "You trained today, so your goal includes extra water. Sip through the afternoon.";
+  return pickForDate(WATER_TIPS, today());
+}
+function waterCard(x) {
+  const pct = Math.min(100, Math.round((x.ml / x.goal) * 100));
+  const glasses = Math.floor(x.ml / GLASS_ML), need = Math.min(20, Math.ceil(x.goal / GLASS_ML));
+  return `<div class="card water" id="water"><div class="row between"><h3>Water</h3><a href="#/water">Details</a></div>
+    <div class="row" style="align-items:baseline;gap:6px"><span class="stat">${litres(x.ml)}</span><span class="muted">of ${litres(x.goal)}${x.auto ? ", recommended for you" : ""}</span></div>
+    <div class="glasses" aria-label="${glasses} of ${need} glasses">${Array.from({ length: need }, (_, i) => `<span class="${i < glasses ? "on" : ""}"></span>`).join("")}</div>
+    <p class="muted" style="margin:8px 0 10px">${esc(waterAdvice(x))}</p>
+    <div class="row" style="gap:8px;flex-wrap:wrap"><button class="small" data-water="250">+ Glass 250 ml</button><button class="small secondary" data-water="500">+ Bottle 500 ml</button>
+      ${x.ml ? `<button class="small ghost" data-water="-250" aria-label="Remove 250 ml">Undo</button>` : ""}</div></div>`;
+}
+function bindWater(x, after) {
+  $$("[data-water]").forEach((b) => (b.onclick = async () => {
+    const ml = Math.max(0, x.ml + Number(b.dataset.water));
+    b.disabled = true;
+    const { error } = await sb.from("water_logs").upsert({ client_id: me.id, log_date: today(), ml, updated_at: new Date().toISOString() }, { onConflict: "client_id,log_date" });
+    if (fail(error)) { b.disabled = false; return; }
+    if (x.ml < x.goal && ml >= x.goal) toast("Water goal reached. Well done.");
+    after();
+  }));
+}
+function waterWeekHtml(rows, goal) {
+  const days = Array.from({ length: 7 }, (_, i) => { const d = new Date(); d.setDate(d.getDate() - 6 + i); return new Date(d - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10); });
+  const by = Object.fromEntries((rows || []).map((r) => [r.log_date, r.ml]));
+  const hit = days.filter((d) => (by[d] || 0) >= goal).length;
+  const avg = Math.round(days.reduce((s, d) => s + (by[d] || 0), 0) / 7);
+  return `<div class="water-week">${days.map((d) => { const v = by[d] || 0; return `<div><span class="bar"><i style="height:${Math.min(100, Math.round((v / goal) * 100))}%" class="${v >= goal ? "hit" : ""}"></i></span>
+      <small>${new Date(d).toLocaleDateString("en-ZA", { weekday: "narrow" })}</small></div>`; }).join("")}</div>
+    <p class="muted" style="margin:8px 0 0">Average ${litres(avg)} a day. Goal reached on ${hit} of the last 7 days.</p>`;
+}
+async function waterView() {
+  const [x, { data: rows }] = await Promise.all([waterToday(),
+    sb.from("water_logs").select("log_date, ml").eq("client_id", me.id).gte("log_date", new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10))]);
+  const base = x.weight ? Math.round(x.weight * 35) : null;
+  render(`<button class="back" onclick="location.hash='#/home'">Back</button><h1>Water</h1>
+    ${waterCard(x)}
+    <div class="card"><h3>Last 7 days</h3>${waterWeekHtml(rows, x.goal)}</div>
+    <div class="card"><h3>How your goal is worked out</h3>
+      <p>${base ? `About 35 ml for every kg you weigh: ${x.weight} kg comes to ${litres(base)}.` : "We use 2 L until you log a weigh-in, then about 35 ml for every kg you weigh."}
+      Add about 500 ml for every hour of exercise${x.minutes ? `. You've logged about ${x.minutes} minutes today, so that's included` : ""}. Add another 500 ml on hot days.</p>
+      <p class="muted" style="margin:0">Tea, rooibos, coffee, milk and sparkling water all count. If you have a heart or kidney condition, or your doctor has limited your fluids, follow their advice instead.</p></div>
+    <form class="card" id="wg"><h3>Your goal</h3>
+      <label class="check"><input type="radio" name="m" value="auto" ${x.auto ? "checked" : ""}><span>Recommended for me (changes with my weight and training)</span></label>
+      <label class="check"><input type="radio" name="m" value="own" ${x.auto ? "" : "checked"}><span>My own goal</span></label>
+      <div class="grid2"><div><label for="wml">Millilitres a day</label><input id="wml" name="ml" type="number" inputmode="numeric" min="500" max="8000" step="250" value="${me.water_goal_ml || x.goal}"></div><div></div></div>
+      <button class="small" style="margin-top:12px">Save goal</button></form>
+    <div class="card"><h3>Tips that help</h3><ul class="tips">${WATER_TIPS.map((t) => `<li>${esc(t)}</li>`).join("")}</ul></div>`);
+  bindWater(x, waterView);
+  $("#wg").onsubmit = async (e) => {
+    e.preventDefault(); const f = e.target; const own = f.m.value === "own";
+    const v = own ? Math.round(num(f.ml.value) / 50) * 50 : null;
+    if (own && (!v || v < 500 || v > 8000)) return toast("Choose between 500 and 8000 ml");
+    const { error } = await sb.from("profiles").update({ water_goal_ml: v }).eq("id", me.id);
+    if (!fail(error)) { me.water_goal_ml = v; toast("Water goal saved"); waterView(); }
+  };
 }
 
 async function foodSetup() {
   const { data: m } = await sb.from("body_metrics").select("weight_kg").eq("client_id", me.id).not("weight_kg", "is", null).order("metric_date", { ascending: false }).limit(1);
-  render(`<h1>Set your daily points</h1>
-    <p class="muted">We use these to work out a safe daily budget. Only the result is saved — your age, sex and height are not stored.</p>
+  let pick = me.nutrition_mode || "points";
+  render(`${foodBudget() ? `<button class="back" onclick="location.hash='#/food'">Back</button>` : ""}<h1>Set up food tracking</h1>
+    <p class="muted">Choose how you'd like to count. You can switch at any time and your log stays.</p>
+    <div class="mode-pick" id="mode" role="radiogroup" aria-label="How to count food">
+      <button type="button" role="radio" data-mode="points" aria-checked="${pick === "points"}" class="${pick === "points" ? "on" : ""}"><b>Points</b><span>Simpler. Protein and fibre count in your favour, some foods are free, and you get a weekly buffer for braais and birthdays.</span></button>
+      <button type="button" role="radio" data-mode="calories" aria-checked="${pick === "calories"}" class="${pick === "calories" ? "on" : ""}"><b>Calories</b><span>Count kcal exactly. Good if you already know your numbers or work with a dietitian.</span></button>
+    </div>
+    <p class="muted">We use these details to work out a safe daily target. Only the result is saved. Your age, sex and height are not stored.</p>
     <form id="fs" class="card">
       <div class="grid2"><div><label>Current weight (kg)</label><input name="w" type="number" step="0.1" required value="${m?.[0]?.weight_kg ?? ""}"></div>
       <div><label>Goal weight (kg)</label><input name="g" type="number" step="0.1" value="${me.goal_weight_kg ?? ""}"></div>
       <div><label>Height (cm)</label><input name="h" type="number" required></div><div><label>Age</label><input name="a" type="number" required></div></div>
       <label>Sex (for the calorie formula)</label><select name="s"><option value="f">Female</option><option value="m">Male</option></select>
       <label>Activity level</label><select name="act"><option value="1.2">Mostly sitting</option><option value="1.375" selected>Light exercise 1–3×/week</option><option value="1.55">Moderate 3–5×/week</option><option value="1.725">Very active</option></select>
-      <div id="res" class="target" hidden></div>
-      <button class="block" style="margin-top:12px">Calculate & save</button>
+      <button class="block" style="margin-top:12px">Calculate and save</button>
       <p class="muted" style="margin-top:10px">Prefer a number from your coach or dietitian? <a href="#" id="manual">Enter it yourself</a>.</p></form>
     <p class="muted">This is a tracking tool, not medical advice. If you have a lot to lose or a health condition, check in with your doctor or a registered dietitian first.</p>`);
+  $$("#mode [data-mode]").forEach((b) => (b.onclick = () => {
+    pick = b.dataset.mode; $$("#mode [data-mode]").forEach((x) => { x.classList.toggle("on", x === b); x.setAttribute("aria-checked", x === b); });
+  }));
+  const save = async (upd, msg) => {
+    const { error } = await sb.from("profiles").update(upd).eq("id", me.id); if (fail(error)) return false;
+    Object.assign(me, upd); toast(msg); return true;
+  };
   $("#manual").onclick = async (e) => {
-    e.preventDefault(); const v = Number(prompt("Daily points budget:")); if (!v || v < 15 || v > 80) return toast("Enter a number between 15 and 80");
-    const { error } = await sb.from("profiles").update({ daily_points: v }).eq("id", me.id); if (!fail(error)) { me.daily_points = v; foodView(); }
+    e.preventDefault(); const cal = pick === "calories";
+    const v = Number(prompt(cal ? "Daily calories (kcal):" : "Daily points budget:"));
+    if (cal ? !v || v < 1200 || v > 5000 : !v || v < 15 || v > 80) return toast(cal ? "Enter a number between 1200 and 5000" : "Enter a number between 15 and 80");
+    const upd = cal ? { nutrition_mode: "calories", daily_kcal: Math.round(v), daily_points: Math.round(v / 50) } : { nutrition_mode: "points", daily_points: Math.round(v), daily_kcal: Math.round(v) * 50 };
+    if (await save(upd, "Saved")) foodView();
   };
   $("#fs").onsubmit = async (e) => {
     e.preventDefault(); const f = e.target;
     const w = num(f.w.value), g = num(f.g.value);
-    const pts = dailyBudget({ weight: w, height: num(f.h.value), age: num(f.a.value), sex: f.s.value, activity: f.act.value, losing: g == null || g < w });
-    const upd = { daily_points: pts, goal_weight_kg: g };
-    const { error } = await sb.from("profiles").update(upd).eq("id", me.id); if (fail(error)) return;
-    Object.assign(me, upd);
+    const kcal = dailyKcal({ weight: w, height: num(f.h.value), age: num(f.a.value), sex: f.s.value, activity: f.act.value, losing: g == null || g < w });
+    const upd = { nutrition_mode: pick, daily_kcal: kcal, daily_points: Math.round(kcal / 50), goal_weight_kg: g };
+    if (!(await save(upd, pick === "calories" ? `Your target: ${kcal} kcal a day` : `Your budget: ${upd.daily_points} points a day`))) return;
     const { data: hasW } = await sb.from("body_metrics").select("id").eq("client_id", me.id).limit(1);
     if (!hasW?.length) await sb.from("body_metrics").insert({ client_id: me.id, weight_kg: w });
-    toast(`Your budget: ${pts} points a day`); foodView();
+    foodView();
   };
 }
 
 async function foodView(date) {
-  if (!me.daily_points) return foodSetup();
+  if (date === "setup" || !foodBudget()) return foodSetup();
   date = date || today();
   const [f, { data: custom }] = await Promise.all([foodSummary(date), sb.from("custom_foods").select("*").eq("client_id", me.id).order("name")]);
   const shift = (n) => { const d = new Date(date); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
   const meals = ["Breakfast", "Lunch", "Dinner", "Snack"];
-  const all = [...(custom || []).map((c) => ({ name: c.name, serving: c.serving || "1 serving", points: Number(c.points), mine: true })), ...FOODS];
+  const all = [...(custom || []).map((c) => ({ name: c.name, serving: c.serving || "1 serving", points: Number(c.points), kcal: c.kcal == null ? Number(c.points) * 50 : Number(c.kcal), mine: true })), ...FOODS];
+  const k = kcalMode();
   render(`<div class="row between"><button class="small secondary" onclick="location.hash='#/food/${shift(-1)}'">‹</button>
       <h2 style="margin:0">${date === today() ? "Today" : fmtDate(date)}</h2>
       <button class="small secondary" ${date >= today() ? "disabled" : ""} onclick="location.hash='#/food/${shift(1)}'" aria-label="Next day">›</button></div>
     <div style="margin-top:12px">${foodCard(f)}</div>
-    ${meals.map((m) => { const rs = f.dayRows.filter((r) => r.meal === m); return `<div class="card"><div class="row between"><h3>${m}</h3><span class="muted">${rs.reduce((s, r) => s + Number(r.points), 0)} pts</span></div>
-      ${rs.map((r) => `<div class="list-item" style="cursor:default"><div class="grow">${esc(r.food_name)} <span class="muted">× ${r.servings}</span></div><b>${r.points}</b>
+    ${meals.map((m) => { const rs = f.dayRows.filter((r) => r.meal === m); return `<div class="card"><div class="row between"><h3>${m}</h3><span class="muted">${Math.round(rs.reduce((s, r) => s + foodVal(r), 0))} ${foodUnit()}</span></div>
+      ${rs.map((r) => `<div class="list-item" style="cursor:default"><div class="grow">${esc(r.food_name)} <span class="muted">× ${r.servings}</span></div><b>${Math.round(foodVal(r))}</b>
         <button class="small secondary" data-del="${r.id}" aria-label="Remove">${ICON.close}</button></div>`).join("") || `<p class="muted" style="margin:4px 0 0">Nothing yet</p>`}</div>`; }).join("")}
     <div class="card" id="add"><h3>Add food</h3>
       <input id="fq" placeholder="Search: pap, biltong, rusk…">
       <div class="grid2" style="margin-top:8px"><select id="meal">${meals.map((m) => `<option ${m === defaultMeal() ? "selected" : ""}>${m}</option>`).join("")}</select>
         <div class="row"><button type="button" class="small secondary" id="sMinus">−</button><b id="sv" style="min-width:34px;text-align:center">1</b><button type="button" class="small secondary" id="sPlus">+</button><span class="muted">serv.</span></div></div>
       <div id="fres" style="max-height:300px;overflow-y:auto;margin-top:8px"></div></div>
-    <div class="card"><div class="row between"><h3>Recipes</h3><span class="muted">Points a serving</span></div>
-      ${RECIPES.map((r, i) => `<a class="recipe-card" href="#/recipe/${i}"><span class="pts">${r.points}</span><div style="flex:1"><b>${esc(r.name)}</b><div class="muted">${r.minutes} min, serves ${r.serves}</div></div></a>`).join("")}</div>
+    <div class="card"><div class="row between"><h3>Recipes</h3><span class="muted">${k ? "kcal" : "Points"} a serving</span></div>
+      ${RECIPES.map((r, i) => `<a class="recipe-card" href="#/recipe/${i}"><span class="pts">${k ? r.kcal : r.points}</span><div style="flex:1"><b>${esc(r.name)}</b><div class="muted">${r.minutes} min, serves ${r.serves}</div></div></a>`).join("")}</div>
     <details class="card"><summary>Not listed? Use the label calculator</summary>
       <form id="lab"><label>Name</label><input name="n" required placeholder="e.g. Woolies protein bar">
       <label>Serving</label><input name="sv" placeholder="e.g. 1 bar (45 g)">
       <div class="grid3"><div><label>kcal</label><input name="k" type="number" step="any" required></div><div><label>Sat. fat g</label><input name="sat" type="number" step="any" value="0"></div>
       <div><label>Sugar g</label><input name="su" type="number" step="any" value="0"></div><div><label>Protein g</label><input name="p" type="number" step="any" value="0"></div>
-      <div><label>Fibre g</label><input name="fi" type="number" step="any" value="0"></div><div><label>Points</label><div class="stat" id="lp">0</div></div></div>
+      <div><label>Fibre g</label><input name="fi" type="number" step="any" value="0"></div><div><label>${k ? "kcal" : "Points"}</label><div class="stat" id="lp">0</div></div></div>
       <button class="block" style="margin-top:10px">Save to my foods</button></form></details>
-    <p class="muted">Free foods are 0 points so hunger is never the reason you stop — portions still count. Your weekly buffer of ${WEEKLY_BUFFER} covers braais and birthdays.</p>`);
+    <p class="muted">${k ? "Your target is a guide, not a rule. Aim to be close most days; one big meal won't undo your week." : `Free foods are 0 points so hunger is never the reason you stop. Portions still count. Your weekly buffer of ${WEEKLY_BUFFER} covers braais and birthdays.`}</p>
+    <p style="text-align:center"><a href="#/food/setup">Counting ${k ? "calories" : "points"}. Change how I count</a></p>`);
   let serv = 1;
   const setServ = (v) => { serv = Math.max(0.5, Math.round(v * 2) / 2); $("#sv").textContent = serv; };
   $("#sMinus").onclick = () => setServ(serv - 0.5); $("#sPlus").onclick = () => setServ(serv + 0.5);
@@ -1000,20 +1279,20 @@ async function foodView(date) {
     const rows = all.filter((x) => x.name.toLowerCase().includes(q)).slice(0, q ? 30 : 12);
     $("#fres").innerHTML = rows.map((x, i) => `<button type="button" class="list-item" data-f="${all.indexOf(x)}" style="width:100%;background:none;color:inherit;border-radius:0;text-align:left">
       <div class="grow"><b>${esc(x.name)}</b> <span class="muted">${esc(x.serving)}</span>${x.mine ? ` <span class="chip">mine</span>` : ""}</div>
-      ${x.free ? `<span class="chip good">Free</span>` : `<b>${x.points}</b>`}</button>`).join("") || `<p class="muted">No match — try the label calculator below.</p>`;
+      ${k ? `<b>${x.kcal}</b>` : x.free ? `<span class="chip good">Free</span>` : `<b>${x.points}</b>`}</button>`).join("") || `<p class="muted">No match — try the label calculator below.</p>`;
     $$("[data-f]").forEach((b) => (b.onclick = async () => {
       const x = all[b.dataset.f];
-      const { error } = await sb.from("food_logs").insert({ client_id: me.id, log_date: date, meal: $("#meal").value, food_name: x.name, servings: serv, points: Math.round(x.points * serv) });
+      const { error } = await sb.from("food_logs").insert({ client_id: me.id, log_date: date, meal: $("#meal").value, food_name: x.name, servings: serv, points: Math.round(x.points * serv), kcal: Math.round(x.kcal * serv) });
       if (!fail(error)) { toast(`Added ${x.name}`); foodView(date); }
     }));
   };
   $("#fq").oninput = drawRes; drawRes();
   $$("[data-del]").forEach((b) => (b.onclick = async () => { const { error } = await sb.from("food_logs").delete().eq("id", b.dataset.del); if (!fail(error)) foodView(date); }));
   const lab = $("#lab"); const lp = () => calcPoints({ kcal: num(lab.k.value) || 0, sat: num(lab.sat.value) || 0, sugar: num(lab.su.value) || 0, protein: num(lab.p.value) || 0, fibre: num(lab.fi.value) || 0 });
-  lab.oninput = () => ($("#lp").textContent = lp());
+  lab.oninput = () => ($("#lp").textContent = k ? Math.round(num(lab.k.value) || 0) : lp());
   lab.onsubmit = async (e) => {
     e.preventDefault();
-    const { error } = await sb.from("custom_foods").insert({ client_id: me.id, name: lab.n.value.trim(), serving: lab.sv.value || null, points: lp() });
+    const { error } = await sb.from("custom_foods").insert({ client_id: me.id, name: lab.n.value.trim(), serving: lab.sv.value || null, points: lp(), kcal: num(lab.k.value) || 0 });
     if (!fail(error)) { toast("Saved to your foods"); foodView(date); }
   };
 }
@@ -1139,6 +1418,54 @@ async function chatView(clientId) {
 }
 
 // ================================================================ PROFILE (shared)
+// Calendar reminders work even when the app is closed, on any phone, at no cost.
+function icsFile(events) {
+  const pad = (n) => String(n).padStart(2, "0"); const d = new Date();
+  const ds = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").slice(0, 15) + "Z";
+  const url = location.origin + location.pathname;
+  const ev = events.map((e) => ["BEGIN:VEVENT", `UID:or-${me.id}-${e.key}@or-coaching`, `DTSTAMP:${stamp}`, `DTSTART:${ds}T${e.time.replace(":", "")}00`,
+    "DURATION:PT15M", `RRULE:${e.rule}`, `SUMMARY:${e.title}`, `DESCRIPTION:${e.desc} ${url}`, `URL:${url}`,
+    "BEGIN:VALARM", "ACTION:DISPLAY", `DESCRIPTION:${e.title}`, "TRIGGER:PT0M", "END:VALARM", "END:VEVENT"].join("\r\n"));
+  return ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Or.//Coaching//EN", "CALSCALE:GREGORIAN", ...ev, "END:VCALENDAR"].join("\r\n");
+}
+const DAYS = [["MO", "Mon"], ["TU", "Tue"], ["WE", "Wed"], ["TH", "Thu"], ["FR", "Fri"], ["SA", "Sat"], ["SU", "Sun"]];
+function remindersCard() {
+  return `<div class="card" id="rem"><h3>Reminders</h3>
+    <p class="muted" style="margin:0 0 8px">Add reminders to your phone's calendar. They pop up even when the app is closed.</p>
+    <label>Training days</label><div id="remDays">${DAYS.map(([k, l]) => `<span class="chip ${["MO", "WE", "FR"].includes(k) ? "on" : ""}" data-d="${k}" role="button">${l}</span>`).join("")}</div>
+    <div class="grid2"><div><label for="remT">Time</label><input id="remT" type="time" value="07:00"></div><div></div></div>
+    <label class="check"><input type="checkbox" id="remW" checked><span>Weekly weigh-in on Monday mornings</span></label>
+    <label class="check"><input type="checkbox" id="remH" checked><span>Water reminders at 10:00 and 15:00</span></label>
+    <button class="secondary block" id="remGo" style="margin-top:10px">${ICON.calendar} Add to my calendar</button></div>`;
+}
+function bindReminders() {
+  $$("#remDays .chip").forEach((c) => (c.onclick = () => c.classList.toggle("on")));
+  $("#remGo")?.addEventListener("click", () => {
+    const days = $$("#remDays .chip.on").map((c) => c.dataset.d); const ev = [];
+    if (days.length) ev.push({ key: "train", time: $("#remT").value || "07:00", rule: `FREQ=WEEKLY;BYDAY=${days.join(",")}`, title: "Training time", desc: "Open your workout in Or." });
+    if ($("#remW").checked) ev.push({ key: "weigh", time: "07:00", rule: "FREQ=WEEKLY;BYDAY=MO", title: "Weekly weigh-in", desc: "Log your weight (and photo, if you use them) in Or." });
+    if ($("#remH").checked) ["10:00", "15:00"].forEach((t, i) => ev.push({ key: "water" + i, time: t, rule: "FREQ=DAILY", title: "Drink a glass of water", desc: "Tap + Glass in Or." }));
+    if (!ev.length) return toast("Pick at least one reminder");
+    const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([icsFile(ev)], { type: "text/calendar" }));
+    link.download = "or-reminders.ics"; link.click();
+    toast("Open the file and choose Add to calendar");
+  });
+}
+function inviteCard() {
+  if (!me.referral_code) return "";
+  const url = `${location.origin}${location.pathname}?ref=${me.referral_code}`;
+  return `<div class="card"><h3>Invite a friend</h3><p class="muted" style="margin:0 0 8px">Training's easier with company. Share your link and your coach will see that you invited them.</p>
+    <div class="row" style="gap:8px"><input id="refUrl" value="${esc(url)}" readonly aria-label="Your invite link" style="flex:1;min-width:0"><button class="small" id="refShare">Share</button></div></div>`;
+}
+function bindInvite() {
+  $("#refShare")?.addEventListener("click", async () => {
+    const url = $("#refUrl").value; const text = `Come train with me on ${CONFIG.APP_NAME}`;
+    try { if (navigator.share) return await navigator.share({ title: CONFIG.APP_NAME, text, url }); } catch { return; }
+    try { await navigator.clipboard.writeText(url); toast("Link copied"); } catch { $("#refUrl").select(); toast("Copy the link above"); }
+  });
+}
+
 async function profileView() {
   const owned = me.equipment || [];
   render(`<h1>${me.role === "trainer" ? "Settings" : "My profile"}</h1>
@@ -1149,7 +1476,13 @@ async function profileView() {
     ${me.role === "client" ? `<div class="card"><h3>Progress photos</h3>
       <label class="check"><input type="checkbox" id="phOpt" ${me.photos_opt_in ? "checked" : ""}>
       <span>Turn on weekly progress photos. I consent to my coach seeing the photos I upload, to track my progress. Only my coach and I can see them, and I can delete them or switch this off at any time.</span></label>
-      ${me.photos_opt_in ? `<a class="btn secondary block" href="#/photos" style="margin-top:10px">Open my progress photos</a>` : ""}</div>` : ""}
+      ${me.photos_opt_in ? `<label class="check"><input type="checkbox" id="shOpt" ${me.share_consent_at ? "checked" : ""}>
+      <span>My coach may share my before-and-after photos on Instagram (faces can be hidden). I can withdraw this at any time, though posts already shared may stay up.</span></label>
+      <a class="btn secondary block" href="#/photos" style="margin-top:10px">Open my progress photos</a>` : ""}</div>
+    <div class="card"><div class="row between"><div><h3 style="margin:0">Health check</h3><p class="muted" style="margin:2px 0 0">${myScreen ? `Updated ${fmtDate(myScreen.updated_at)}` : "Not done yet"}${myScreen?.flags && !myScreen.cleared_at ? ", waiting for your coach to clear you" : ""}</p></div>
+      <a class="btn small secondary" href="#/health">${myScreen ? "Update" : "Start"}</a></div></div>
+    ${remindersCard()}
+    ${inviteCard()}` : ""}
     <form class="card" id="pf">
       <label>Full name</label><input name="name" value="${esc(me.full_name)}">
       ${me.role === "client" ? `<label>What do I want to track?</label>
@@ -1203,16 +1536,23 @@ async function profileView() {
     const { error } = await sb.from("profiles").update(upd).eq("id", me.id);
     if (!fail(error)) { Object.assign(me, upd); toast(on ? "Progress photos switched on" : "Progress photos switched off. Your coach can no longer see them."); profileView(); }
   });
+  $("#shOpt")?.addEventListener("change", async (e) => {
+    const upd = { share_consent_at: e.target.checked ? new Date().toISOString() : null };
+    const { error } = await sb.from("profiles").update(upd).eq("id", me.id);
+    if (!fail(error)) { Object.assign(me, upd); toast(e.target.checked ? "Thanks. Your coach can now share your progress." : "Sharing switched off"); }
+  });
+  bindReminders(); bindInvite();
   $("#libFree")?.addEventListener("change", async (e) => {
     const { error } = await sb.from("profiles").update({ library_free: e.target.checked }).eq("id", me.id);
     if (!fail(error)) { me.library_free = e.target.checked; toast(e.target.checked ? "Library is free" : "Library is now a paid extra"); }
   });
   $("#export")?.addEventListener("click", async () => {
-    const [p, m, a, l, msg, fl, ck] = await Promise.all([
+    const [p, m, a, l, msg, fl, ck, hs, wt] = await Promise.all([
       sb.from("profiles").select("*").eq("id", me.id).single(), sb.from("body_metrics").select("*").eq("client_id", me.id),
       sb.from("activities").select("*").eq("client_id", me.id), sb.from("set_logs").select("*").eq("client_id", me.id),
-      sb.from("messages").select("*").eq("client_id", me.id), sb.from("food_logs").select("*").eq("client_id", me.id), sb.from("checkins").select("*").eq("client_id", me.id)]);
-    const blob = new Blob([JSON.stringify({ profile: p.data, body_metrics: m.data, activities: a.data, sets: l.data, messages: msg.data, food: fl.data, checkins: ck.data }, null, 2)], { type: "application/json" });
+      sb.from("messages").select("*").eq("client_id", me.id), sb.from("food_logs").select("*").eq("client_id", me.id), sb.from("checkins").select("*").eq("client_id", me.id),
+      sb.from("health_screens").select("*").eq("client_id", me.id), sb.from("water_logs").select("*").eq("client_id", me.id)]);
+    const blob = new Blob([JSON.stringify({ profile: p.data, body_metrics: m.data, activities: a.data, sets: l.data, messages: msg.data, food: fl.data, checkins: ck.data, health_check: hs.data, water: wt.data }, null, 2)], { type: "application/json" });
     const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = "my-training-data.json"; link.click();
   });
   $("#delReq")?.addEventListener("click", async () => {
@@ -1223,23 +1563,224 @@ async function profileView() {
 }
 
 // ================================================================ TRAINER
+const daysAgoIso = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return new Date(d - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10); };
+const daysBetween = (a, b = today()) => Math.round((new Date(b) - new Date(a)) / 864e5);
+const firstName = (c) => (c?.full_name || "").split(" ")[0] || "Client";
+
+// One pass over the last four weeks for every client: activity, check-ins, passes, health, water, weight.
+async function coachData() {
+  const since = daysAgoIso(28);
+  const [{ data: people }, { data: logs }, { data: acts }, { data: wos }, { data: cks }, { data: unread }, { data: screens }, { data: metrics }, { data: water }] = await Promise.all([
+    sb.from("profiles").select("*").eq("role", "client").order("full_name"),
+    sb.from("set_logs").select("client_id, logged_at").gte("logged_at", since),
+    sb.from("activities").select("client_id, activity_date, minutes").gte("activity_date", since),
+    sb.from("workouts").select("id, client_id, name, scheduled_date, completed_at"),
+    sb.from("checkins").select("*").gte("checkin_date", since),
+    sb.from("messages").select("client_id").is("read_at", null).neq("sender_id", me.id),
+    sb.from("health_screens").select("client_id, flags, cleared_at"),
+    sb.from("body_metrics").select("client_id, metric_date, weight_kg").gte("metric_date", daysAgoIso(42)).order("metric_date"),
+    sb.from("water_logs").select("client_id, log_date, ml").gte("log_date", daysAgoIso(6)),
+  ]);
+  const pending = (people || []).filter((p) => !p.trainer_id), mine = (people || []).filter((p) => p.trainer_id === me.id);
+  const rows = mine.map((c) => {
+    const own = (arr) => (arr || []).filter((r) => r.client_id === c.id);
+    const L = own(logs), A = own(acts), W = own(wos), C = own(cks), M = own(metrics).filter((m) => m.weight_kg), WT = own(water);
+    const sessionDays = new Set([...L.map((l) => l.logged_at.slice(0, 10)), ...A.map((x) => x.activity_date), ...W.filter((w) => w.completed_at).map((w) => w.completed_at.slice(0, 10))]);
+    const seen = [...sessionDays, ...C.map((x) => x.checkin_date)].sort().pop() || null;
+    const ck = C.filter((x) => x.energy != null).sort((a, b) => a.checkin_date.localeCompare(b.checkin_date));
+    const last7 = ck.slice(-7);
+    const avg = (k) => (last7.length ? +(last7.reduce((sum, x) => sum + x[k], 0) / last7.length).toFixed(1) : null);
+    const w0 = M[0], w1 = M[M.length - 1];
+    return {
+      c, seen, quiet: seen ? daysBetween(seen) : null,
+      s7: [...sessionDays].filter((d) => d >= daysAgoIso(6)).length, s28: sessionDays.size,
+      done7: W.filter((w) => w.completed_at && w.completed_at.slice(0, 10) >= daysAgoIso(6)).length,
+      overdue: W.filter((w) => !w.completed_at && w.scheduled_date && w.scheduled_date < today()).length,
+      planned: W.filter((w) => !w.completed_at && (!w.scheduled_date || w.scheduled_date >= today())).length,
+      rough: ck.filter((x) => x.checkin_date >= daysAgoIso(3) && (x.energy <= 2 || x.sleep <= 2 || x.soreness >= 4)).pop() || null,
+      lastNote: ck.filter((x) => x.note).pop()?.note || null,
+      energy: avg("energy"), sleep: avg("sleep"), soreness: avg("soreness"),
+      wChange: w0 && w1 && w0 !== w1 ? +(w1.weight_kg - w0.weight_kg).toFixed(1) : null,
+      wWeeks: w0 && w1 ? Math.max(1, Math.round(daysBetween(w0.metric_date, w1.metric_date) / 7)) : null,
+      waterAvg: WT.length ? Math.round(WT.reduce((sum, x) => sum + x.ml, 0) / 7) : null,
+      unreadN: own(unread).length,
+      passLeft: c.access_until ? daysBetween(today(), c.access_until) : null,
+      screen: own(screens)[0] || null,
+    };
+  });
+  return { people: people || [], pending, mine, rows };
+}
+
+// What needs Tanya, most urgent first: [severity 1-3, reason, link]
+function attention(r) {
+  const out = []; const c = r.c;
+  if (r.unreadN) out.push([3, `${r.unreadN} unread ${r.unreadN === 1 ? "message" : "messages"}`, `chat/${c.id}`]);
+  if (!r.screen) out.push([2, "Health check not done yet", `client/${c.id}`]);
+  else if (r.screen.flags && !r.screen.cleared_at) out.push([3, `Health check needs your review (${r.screen.flags} yes)`, `client/${c.id}`]);
+  if (r.rough) out.push([3, `Rough check-in ${fmtDate(r.rough.checkin_date)}: energy ${r.rough.energy}, sleep ${r.rough.sleep}, soreness ${r.rough.soreness}${r.rough.note ? `. "${r.rough.note}"` : ""}`, `client/${c.id}`]);
+  if (r.quiet == null) out.push([1, "Hasn't been active yet", `chat/${c.id}`]);
+  else if (r.quiet >= 5) out.push([r.quiet >= 10 ? 3 : 2, `Quiet for ${r.quiet} days`, `chat/${c.id}`]);
+  if (c.plan !== "free" && r.passLeft != null) {
+    if (r.passLeft < 0) out.push([2, `Pass ended ${fmtDate(c.access_until)}`, `client/${c.id}`]);
+    else if (r.passLeft <= 7) out.push([2, `Pass ends in ${r.passLeft} ${r.passLeft === 1 ? "day" : "days"}`, `client/${c.id}`]);
+  }
+  if (r.overdue) out.push([1, `${r.overdue} overdue ${r.overdue === 1 ? "workout" : "workouts"}`, `client/${c.id}`]);
+  if ((c.tracks || ["exercise"]).includes("exercise") && !r.planned && r.quiet != null && r.quiet < 14) out.push([1, "Nothing planned. Build their next workout", `builder/${c.id}`]);
+  return out;
+}
+
+function clientsContext(rows) {
+  return `Today is ${today()}. ${rows.length} clients.\n` + rows.map((r) => [
+    `Client ${firstName(r.c)}`, `goal: ${r.c.goal || "not set"}`, `plan: ${r.c.plan}`,
+    `last active: ${r.quiet == null ? "never" : r.quiet + " days ago"}`, `active days last 7/28: ${r.s7}/${r.s28}`,
+    `workouts done this week: ${r.done7}`, `overdue workouts: ${r.overdue}`, `workouts planned ahead: ${r.planned}`,
+    r.energy != null ? `check-in averages (1-5): energy ${r.energy}, sleep ${r.sleep}, soreness ${r.soreness}` : "no check-ins",
+    r.lastNote ? `latest check-in note: "${r.lastNote}"` : "",
+    r.wChange != null ? `weight change ${r.wChange} kg over ${r.wWeeks} weeks` : "",
+    r.waterAvg != null ? `water average ${r.waterAvg} ml a day` : "",
+    r.screen?.flags && !r.screen.cleared_at ? "health check needs coach review before hard training" : "",
+    r.c.plan !== "free" && r.passLeft != null ? `pass ends in ${r.passLeft} days` : "",
+  ].filter(Boolean).join("; ")).join("\n");
+}
+
+// ---------------------------------------------------------------- Ask AI (coach only)
+function aiBox(prompts) {
+  return `<div class="card ai"><div class="row between"><h3>Ask AI</h3><span class="chip">Beta</span></div>
+    <p class="muted" style="margin:0 0 8px">Ideas to help you decide. You stay the coach: check anything before you act on it. Client names are sent as first names only.</p>
+    <div class="chips">${prompts.map((q) => `<a href="#" data-aiq="${esc(q)}">${esc(q)}</a>`).join("")}</div>
+    <textarea id="aiQ" maxlength="1000" placeholder="Or ask your own question" aria-label="Ask AI a question"></textarea>
+    <button class="small" id="aiGo" style="margin-top:8px">Ask</button><div id="aiOut" class="ai-out" aria-live="polite"></div></div>`;
+}
+function fmtAi(t) {
+  return esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").split(/\n{2,}/).map((par) => {
+    const lines = par.split("\n").filter((l) => l.trim());
+    if (lines.length && lines.every((l) => /^\s*([-•*]|\d+\.)\s/.test(l))) return `<ul>${lines.map((l) => `<li>${l.replace(/^\s*([-•*]|\d+\.)\s/, "")}</li>`).join("")}</ul>`;
+    if (/^#+\s/.test(lines[0] || "")) return `<h3>${lines[0].replace(/^#+\s/, "")}</h3>${lines.slice(1).length ? `<p>${lines.slice(1).join("<br>")}</p>` : ""}`;
+    return `<p>${lines.join("<br>")}</p>`;
+  }).join("");
+}
+function bindAi(context) {
+  $$("[data-aiq]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); $("#aiQ").value = a.dataset.aiq; $("#aiGo").click(); }));
+  $("#aiGo").onclick = async () => {
+    const q = $("#aiQ").value.trim(); if (!q) return toast("Type a question or tap a suggestion");
+    const b = $("#aiGo"); b.disabled = true; b.textContent = "Thinking…"; $("#aiOut").innerHTML = `<p class="muted">Looking at your clients' data…</p>`;
+    const { data, error } = await sb.functions.invoke("coach-ai", { body: { question: q, context: await context() } });
+    b.disabled = false; b.textContent = "Ask";
+    if (error || data?.error || !data?.text) { $("#aiOut").innerHTML = `<p class="muted">Ask AI isn't switched on yet. It needs the AI key added in Supabase (step 6 of the setup guide).</p>`; return; }
+    $("#aiOut").innerHTML = fmtAi(data.text);
+  };
+}
+
+function bindBroadcast(mine) {
+  $("#bc")?.addEventListener("click", () => {
+    if (!mine.length) return toast("Accept a client first");
+    document.body.insertAdjacentHTML("beforeend", `<div class="picker" id="bcBox" role="dialog" aria-label="Message all clients"><div class="picker-box">
+      <div class="row between"><h2 style="margin:0">Message all clients</h2><button type="button" class="small secondary" id="bcX" aria-label="Close">${ICON.close}</button></div>
+      <p class="muted">Goes into each client's own chat with you, so replies stay private.</p>
+      <textarea id="bcT" maxlength="1000" placeholder="e.g. New challenge this week: 8,000 steps a day. Who's in?"></textarea>
+      <button class="block" id="bcSend" style="margin-top:12px">Send to ${mine.length} ${mine.length === 1 ? "client" : "clients"}</button></div></div>`);
+    const close = () => $("#bcBox")?.remove();
+    $("#bcX").onclick = close; $("#bcBox").addEventListener("click", (e) => { if (e.target.id === "bcBox") close(); });
+    $("#bcSend").onclick = async () => {
+      const body = $("#bcT").value.trim(); if (!body) return toast("Write your message first");
+      $("#bcSend").disabled = true;
+      const { error } = await sb.from("messages").insert(mine.map((c) => ({ client_id: c.id, sender_id: me.id, body })));
+      if (fail(error)) { $("#bcSend").disabled = false; return; }
+      close(); toast(`Sent to ${mine.length} ${mine.length === 1 ? "client" : "clients"}`);
+    };
+    $("#bcT").focus();
+  });
+}
+
+async function trainerDash() {
+  const { pending, mine, rows } = await coachData();
+  const h = new Date().getHours(); const hello = h < 12 ? "Morning" : h < 17 ? "Afternoon" : "Evening";
+  const items = rows.flatMap((r) => attention(r).map(([sev, why, link]) => ({ r, sev, why, link }))).sort((a, b) => b.sev - a.sev);
+  const byClient = []; items.forEach((x) => { const g = byClient.find((y) => y.r === x.r); g ? g.why.push(x) : byClient.push({ r: x.r, sev: x.sev, why: [x] }); });
+  const active7 = rows.filter((r) => r.quiet != null && r.quiet <= 6).length;
+  const sessions7 = rows.reduce((sum, r) => sum + r.s7, 0);
+  const wins = rows.flatMap((r) => [
+    r.done7 ? [r, `Finished ${r.done7} ${r.done7 === 1 ? "workout" : "workouts"} this week`] : null,
+    r.s7 >= 4 ? [r, `Active on ${r.s7} of the last 7 days`] : null,
+    r.wChange != null && r.wChange < 0 && String(r.c.goal || "").match(/lose|kg|weight/i) ? [r, `Down ${-r.wChange} kg in ${r.wWeeks} ${r.wWeeks === 1 ? "week" : "weeks"}`] : null,
+  ].filter(Boolean));
+  render(`<h1>${hello}, ${esc(firstName(me))}</h1>
+    <div class="grid2 dash-stats">
+      <a class="card" href="#/clients"><span class="stat">${mine.length}</span><span class="stat-label">Clients</span></a>
+      <div class="card"><span class="stat">${active7}</span><span class="stat-label">Active this week</span></div>
+      <div class="card"><span class="stat">${sessions7}</span><span class="stat-label">Active days logged this week</span></div>
+      <a class="card" href="#/clients"><span class="stat">${pending.length}</span><span class="stat-label">New sign-ups</span></a></div>
+    <div class="sec"><h2>Needs you</h2><span class="muted">${byClient.length ? `${byClient.length} ${byClient.length === 1 ? "client" : "clients"}` : ""}</span></div>
+    <div class="card">${pending.length ? `<a class="list-item att sev2" href="#/clients"><span class="avatar">${pending.length}</span><div class="grow"><b>New sign-ups waiting</b><div class="muted">Accept them so they can start</div></div></a>` : ""}
+      ${byClient.map((g) => `<a class="list-item att sev${g.sev}" href="#/${g.why[0].link}">${avatar(g.r.c)}<div class="grow"><b>${esc(g.r.c.full_name)}</b>
+        ${g.why.map((w) => `<div class="muted">${esc(w.why)}</div>`).join("")}</div></a>`).join("")
+      || (pending.length ? "" : `<div class="empty">Nobody needs you right now. Nice.</div>`)}</div>
+    ${wins.length ? `<div class="sec"><h2>Wins this week</h2><span class="muted">Worth a shout-out</span></div>
+      <div class="card">${[...new Set(wins.map(([r]) => r))].map((r) => `<a class="list-item" href="#/chat/${r.c.id}">${avatar(r.c)}<div class="grow"><b>${esc(r.c.full_name)}</b>
+        ${wins.filter(([x]) => x === r).map(([, t]) => `<div class="muted">${esc(t)}</div>`).join("")}</div><span class="ico" aria-label="Message">${ICON.chat}</span></a>`).join("")}</div>` : ""}
+    ${aiBox(["Who needs me most this week, and what should I say to them?", "Ideas to re-engage my quiet clients", "Draft a motivating message for everyone", "Suggest a theme for next week's daily challenge"])}
+    <div class="grid2" style="margin-top:6px"><button class="secondary" id="bc">${ICON.chat} Message all clients</button><button class="secondary" onclick="location.hash='#/templates'">${ICON.calendar} Templates</button></div>`);
+  bindAi(async () => clientsContext(rows));
+  bindBroadcast(mine);
+}
+
 async function trainerClients() {
-  const { data: people } = await sb.from("profiles").select("*").eq("role", "client").order("full_name");
-  const pending = (people || []).filter((p) => !p.trainer_id); const mine = (people || []).filter((p) => p.trainer_id === me.id);
-  const { data: recent } = await sb.from("set_logs").select("client_id, logged_at").order("logged_at", { ascending: false }).limit(500);
-  const lastSeen = {}; (recent || []).forEach((r) => (lastSeen[r.client_id] ??= r.logged_at));
+  const { people, pending, rows } = await coachData();
+  const nameOf = (id) => people.find((p) => p.id === id)?.full_name || "a client";
+  const tags = (r) => [
+    r.screen?.flags && !r.screen.cleared_at ? `<span class="chip warn">Health review</span>` : !r.screen ? `<span class="chip">No health check</span>` : "",
+    r.c.plan !== "free" ? `<span class="chip ${r.passLeft != null && r.passLeft < 0 ? "warn" : "good"}">${r.c.plan === "pt" ? "PT" : "Library"}${r.passLeft != null && r.passLeft >= 0 && r.passLeft <= 7 ? `, ${r.passLeft}d left` : r.passLeft != null && r.passLeft < 0 ? ", expired" : ""}</span>` : "",
+  ].join("");
+  const FILTERS = [["all", "All"], ["att", "Needs you"], ["quiet", "Quiet 5+ days"], ["pt", "PT"], ["library", "Library"], ["free", "Workouts only"]];
   render(`<h1>Clients</h1>
     ${pending.length ? `<div class="card"><h3>New sign-ups (${pending.length})</h3>${pending.map((p) => `<div class="list-item">${avatar(p)}
-      <div class="grow"><b>${esc(p.full_name)}</b><div class="muted">${esc(p.email)}, joined ${fmtDate(p.created_at)}${p.popia_consent_at ? "" : ", no consent recorded"}</div></div>
+      <div class="grow"><b>${esc(p.full_name)}</b><div class="muted">${esc(p.email)}, joined ${fmtDate(p.created_at)}${p.referred_by ? `, invited by ${esc(nameOf(p.referred_by))}` : ""}${p.popia_consent_at ? "" : ", no consent recorded"}</div></div>
       <button class="small" data-accept="${p.id}">Accept</button></div>`).join("")}</div>` : ""}
-    <div class="card">${mine.map((p) => `<a class="list-item" href="#/client/${p.id}">${avatar(p)}
-      <div class="grow"><b>${esc(p.full_name)}</b> ${p.plan !== "free" ? `<span class="chip ${p.access_until && p.access_until < today() ? "warn" : "good"}">${p.plan === "pt" ? "PT" : "Library"}</span>` : ""}<div class="muted">${esc(p.goal || "No goal set")}</div></div>
-      <span class="muted">${lastSeen[p.id] ? "Trained " + fmtDate(lastSeen[p.id]) : "No sets yet"}</span></a>`).join("")
-      || `<div class="empty">No clients yet. Share the app link — new sign-ups appear here for you to accept.</div>`}</div>`);
+    <input id="cq" placeholder="Search clients" aria-label="Search clients" style="margin-bottom:10px">
+    <div class="chips" id="cf">${FILTERS.map(([k, l], i) => `<a href="#" data-f="${k}" class="${i ? "" : "pass"}">${l}</a>`).join("")}</div>
+    <div class="card" id="cl"></div>
+    ${inviteCard().replace("Invite a friend", "Invite a new client").replace("Training's easier with company. Share your link and your coach will see that you invited them.", "Share your sign-up link in your Instagram bio or WhatsApp. New sign-ups appear here for you to accept.")}`);
+  let f = "all";
+  const draw = () => {
+    const q = $("#cq").value.toLowerCase();
+    const list = rows.filter((r) => r.c.full_name.toLowerCase().includes(q) && (f === "all" || (f === "att" ? attention(r).some(([sv]) => sv >= 2) : f === "quiet" ? r.quiet == null || r.quiet >= 5 : r.c.plan === f)));
+    $("#cl").innerHTML = list.map((r) => `<a class="list-item" href="#/client/${r.c.id}">${avatar(r.c)}
+      <div class="grow"><b>${esc(r.c.full_name)}</b> ${tags(r)}<div class="muted">${esc(r.c.goal || "No goal set")}</div></div>
+      <span class="muted" style="text-align:right">${r.quiet == null ? "Not active yet" : r.quiet === 0 ? "Active today" : `Active ${r.quiet}d ago`}<br>${r.s7} days this week</span></a>`).join("")
+      || `<div class="empty">${rows.length ? "No clients match." : "No clients yet. Share your link below. New sign-ups appear here for you to accept."}</div>`;
+    hydrateAvatars($("#cl"));
+  };
+  $("#cq").oninput = draw;
+  $$("#cf a").forEach((a) => (a.onclick = (e) => { e.preventDefault(); $$("#cf a").forEach((x) => x.classList.remove("pass")); a.classList.add("pass"); f = a.dataset.f; draw(); }));
+  draw(); bindInvite();
   $$("[data-accept]").forEach((b) => (b.onclick = async () => {
     const { error } = await sb.from("profiles").update({ trainer_id: me.id }).eq("id", b.dataset.accept);
     if (!fail(error)) { toast("Client accepted"); trainerClients(); }
   }));
+}
+
+function healthCard(h) {
+  if (!h) return `<div class="card"><div class="row between"><h3>Health check</h3><span class="chip">Not done</span></div><p class="muted" style="margin:0">They'll be asked to complete it the next time they open the app.</p></div>`;
+  const yes = HEALTH_QS.filter(([k]) => h.answers?.[k]);
+  return `<div class="card ${h.flags && !h.cleared_at ? "flagged" : ""}"><div class="row between"><h3>Health check</h3>${h.flags ? (h.cleared_at ? `<span class="chip good">Cleared ${fmtDate(h.cleared_at)}</span>` : `<span class="chip warn">Needs review</span>`) : `<span class="chip good">All clear</span>`}</div>
+    ${yes.length ? `<p class="muted" style="margin:6px 0 4px">Answered yes to:</p><ul class="tips">${yes.map(([, q]) => `<li>${esc(q)}</li>`).join("")}</ul>` : ""}
+    ${h.details ? `<p><span class="muted">Their notes:</span> ${esc(h.details)}</p>` : ""}
+    <p style="margin:6px 0 0"><span class="muted">Emergency contact:</span> ${esc(h.emergency_name)}, <a href="tel:${esc(String(h.emergency_phone || "").replace(/[^+0-9]/g, ""))}">${esc(h.emergency_phone)}</a></p>
+    <p class="muted" style="margin:6px 0 0">Agreed to the terms ${fmtDate(h.waiver_accepted_at)}. Last updated ${fmtDate(h.updated_at)}.</p>
+    ${h.flags && !h.cleared_at ? `<p class="muted" style="margin-top:8px">If they need a doctor's go-ahead, get it before hard training. Then mark them as cleared.</p><button class="small" id="clearH">Mark as cleared to train</button>` : ""}</div>`;
+}
+
+function clientContext(c, d) {
+  const pbs = Object.values(personalBests(d.logs));
+  const ck = (d.cks || []).filter((r) => r.energy != null);
+  return [`Today is ${today()}. Client: ${firstName(c)}.`, `Goal: ${c.goal || "not set"}.`, `Plan: ${c.plan}. Tracks: ${(c.tracks || []).join(", ")}.`,
+    `Equipment: ${(c.equipment || []).join(", ") || "bodyweight / not set"}. Weights: ${c.weights_note || "not given"}.`,
+    d.screen?.flags && !d.screen.cleared_at ? "Health check: flagged, waiting for coach review. Keep suggestions gentle and advise checking with a doctor." : d.screen ? "Health check: clear or cleared by coach." : "Health check: not done yet.",
+    `Workouts (newest first): ${(d.wos || []).slice(0, 8).map((w) => `${w.name} ${w.scheduled_date || ""} ${w.completed_at ? "done" : "open"}`).join("; ") || "none"}.`,
+    `Exercise history: ${pbs.map((b) => { const l = b.history[b.history.length - 1]; return `${b.name}: ${b.sets} sets logged, last ${l.reps ?? l.seconds + "s"}${l.weight_kg ? " @ " + l.weight_kg + " kg" : ""}, best ${b.best.reps ?? b.best.seconds + "s"}${b.best.weight_kg ? " @ " + b.best.weight_kg + " kg" : ""}`; }).join("; ") || "nothing logged yet"}.`,
+    `Check-ins last 14 days (energy/sleep/soreness, 1-5): ${ck.map((r) => `${r.checkin_date} ${r.energy}/${r.sleep}/${r.soreness}${r.note ? ` "${r.note}"` : ""}`).join("; ") || "none"}.`,
+    `Weights: ${(d.metrics || []).filter((m) => m.weight_kg).slice(-8).map((m) => `${m.metric_date} ${m.weight_kg} kg`).join("; ") || "none"}.`,
+    `Water last 7 days: ${(d.water || []).map((w) => `${w.log_date} ${w.ml} ml`).join("; ") || "not tracked"}.`].join("\n");
 }
 
 function checkinHistory(rows) {
@@ -1253,11 +1794,16 @@ function checkinHistory(rows) {
 }
 
 async function trainerClient(id) {
-  const [{ data: c }, { data: wos }, { data: cks }] = await Promise.all([
+  const [{ data: c }, { data: wos }, { data: cks }, { data: hs }, { data: notes }, { data: water }, { data: metrics }] = await Promise.all([
     sb.from("profiles").select("*").eq("id", id).single(),
     sb.from("workouts").select("*, workout_items(count)").eq("client_id", id).order("created_at", { ascending: false }),
     sb.from("checkins").select("*").eq("client_id", id).gte("checkin_date", new Date(Date.now() - 13 * 864e5).toISOString().slice(0, 10)).order("checkin_date", { ascending: false }),
+    sb.from("health_screens").select("*").eq("client_id", id),
+    sb.from("coach_notes").select("*").eq("client_id", id).order("created_at", { ascending: false }),
+    sb.from("water_logs").select("log_date, ml").eq("client_id", id).gte("log_date", daysAgoIso(6)),
+    sb.from("body_metrics").select("metric_date, weight_kg").eq("client_id", id).order("metric_date"),
   ]);
+  const screen = hs?.[0] || null;
   if (!c) return render(`<div class="empty">Client not found.</div>`);
   const prog = await progressView(id, true);
   render(`<button class="back" onclick="location.hash='#/clients'">← Clients</button>
@@ -1268,12 +1814,18 @@ async function trainerClient(id) {
     <form class="card" id="acc"><h3>Access & payment</h3><div class="grid2">
       <div><label>Plan</label><select name="plan">${[["free", "Workouts only"], ["library", "Library subscriber"], ["pt", "PT client"]].map(([k, l]) => `<option value="${k}" ${c.plan === k ? "selected" : ""}>${l}</option>`).join("")}</select></div>
       <div><label>Paid until</label><input name="until" type="date" value="${c.access_until || ""}"></div></div>
-      <div style="margin-top:10px">${CONFIG.OFFERS.filter((o) => o.days).map((o) => `<button type="button" class="small secondary" data-pass="${o.days}" data-plan="${o.key === "package" ? "pt" : "library"}" style="margin:0 6px 6px 0">${esc(o.title)}</button>`).join("")}</div>
+      <div style="margin-top:10px"><button type="button" class="small secondary" data-pass="7" data-plan="library" style="margin:0 6px 6px 0">7-day free trial</button>${CONFIG.OFFERS.filter((o) => o.days).map((o) => `<button type="button" class="small secondary" data-pass="${o.days}" data-plan="${o.key === "package" ? "pt" : "library"}" style="margin:0 6px 6px 0">${esc(o.title)}</button>`).join("")}</div>
       <p class="muted" style="margin:4px 0 0">A pass sets the plan and adds its days from today, or from the end of their current pass.</p>
       <button class="small" style="margin-top:10px">Update access</button>
       ${c.access_until && c.access_until < today() ? `<span class="chip warn">Expired ${fmtDate(c.access_until)}</span>` : ""}</form>
+    ${healthCard(screen)}
+    <div class="card" id="notes"><div class="row between"><h3>Private notes</h3><span class="muted">Only you see these</span></div>
+      ${(notes || []).map((n) => `<div class="note"><p>${esc(n.body)}</p><div class="row between"><span class="muted">${fmtTime(n.created_at)}</span><button type="button" class="small ghost" data-nd="${n.id}">Delete</button></div></div>`).join("")}
+      <form id="nf"><textarea name="b" maxlength="2000" required placeholder="Session notes, niggles, what they told you" aria-label="New note"></textarea><button class="small" style="margin-top:8px">Add note</button></form></div>
+    ${aiBox([`Suggest next week's workouts for ${firstName(c)}`, `How is ${firstName(c)} progressing?`, `Draft a check-in message to ${firstName(c)}`, "How can I progress their main lifts safely?"])}
     ${c.photos_opt_in ? `<a class="card row between" href="#/photos/${c.id}" style="text-decoration:none;color:inherit"><div><h3 style="margin:0">Progress photos</h3><p class="muted" style="margin:2px 0 0">Before and after, week by week</p></div>${ICON.progress}</a>` : ""}
     ${checkinHistory((cks || []).filter((r) => r.energy != null))}
+    ${(water || []).length ? `<div class="card"><h3>Water</h3>${waterWeekHtml(water, c.water_goal_ml || waterGoal({ weight: (metrics || []).filter((m) => m.weight_kg).pop()?.weight_kg }))}</div>` : ""}
     <div class="card"><div class="row between"><h3>Workouts</h3><button class="small" onclick="location.hash='#/builder/${c.id}'">+ New workout</button></div>
       ${(wos || []).map((w) => `<a class="list-item" href="#/builder/${c.id}/${w.id}"><div class="grow"><b>${esc(w.name)}</b>
         <div class="muted">${w.workout_items?.[0]?.count || 0} exercises${w.scheduled_date ? ", " + fmtDate(w.scheduled_date) : ""}</div></div>
@@ -1281,6 +1833,21 @@ async function trainerClient(id) {
         || `<div class="empty">No workouts yet.</div>`}</div>
     ${prog.html}`);
   prog.after();
+  bindAi(async () => clientContext(c, { logs: await loadLogs(id), wos, cks, screen, water, metrics }));
+  $("#clearH")?.addEventListener("click", async () => {
+    if (!confirm(`Confirm ${firstName(c)} is cleared to train? Only do this once you're satisfied it's safe, for example after a doctor's go-ahead.`)) return;
+    const { error } = await sb.from("health_screens").update({ cleared_at: new Date().toISOString() }).eq("client_id", c.id);
+    if (!fail(error)) { await sb.from("messages").insert({ client_id: c.id, sender_id: me.id, body: "I've reviewed your health check. You're cleared to train. Let's go!" }); toast("Marked as cleared"); trainerClient(id); }
+  });
+  $("#nf").onsubmit = async (e) => {
+    e.preventDefault(); const body = e.target.b.value.trim(); if (!body) return;
+    const { error } = await sb.from("coach_notes").insert({ trainer_id: me.id, client_id: c.id, body });
+    if (!fail(error)) { toast("Note saved"); trainerClient(id); }
+  };
+  $$("[data-nd]").forEach((b) => (b.onclick = async () => {
+    if (!confirm("Delete this note?")) return;
+    const { error } = await sb.from("coach_notes").delete().eq("id", b.dataset.nd); if (!fail(error)) trainerClient(id);
+  }));
   $$("[data-pass]").forEach((b) => (b.onclick = () => {
     const f = $("#acc"); const base = f.until.value && f.until.value >= today() ? new Date(f.until.value) : new Date(Date.now() - 864e5);
     base.setDate(base.getDate() + Number(b.dataset.pass)); f.until.value = base.toISOString().slice(0, 10);
@@ -1302,10 +1869,11 @@ const SECTIONS = [
 const sectionOf = (it) => (SECTIONS.some((s) => s.key === it.section) ? it.section : "Main set");
 
 async function workoutBuilder(clientId, workoutId) {
-  const [{ data: c }, { data: library }, wRes] = await Promise.all([
+  const [{ data: c }, { data: library }, wRes, { data: templates }] = await Promise.all([
     sb.from("profiles").select("*").eq("id", clientId).single(),
     sb.from("exercises").select("*").eq("trainer_id", me.id).order("name"),
     workoutId ? sb.from("workouts").select("*, workout_items(*)").eq("id", workoutId).single() : Promise.resolve({ data: null }),
+    sb.from("workout_templates").select("*").order("name"),
   ]);
   const w = wRes.data;
   let items = (w?.workout_items || []).sort((a, b) => a.position - b.position).map((i) => ({ ...i, section: sectionOf(i) }));
@@ -1382,13 +1950,31 @@ async function workoutBuilder(clientId, workoutId) {
 
   render(`<button class="back" onclick="location.hash='#/client/${clientId}'">Back to ${esc(c.full_name)}</button>
     <h1>${w ? "Edit workout" : "New workout"}</h1>
-    <form id="wf"><div class="card"><label>Workout name</label><input name="name" required value="${esc(w?.name || "")}" placeholder="e.g. Lower body A">
+    <form id="wf"><div class="card">
+      ${!w && (templates || []).length ? `<label for="tpl">Start from a template</label><select id="tpl"><option value="">Blank workout</option>${templates.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("")}</select>` : ""}
+      <label>Workout name</label><input name="name" required value="${esc(w?.name || "")}" placeholder="e.g. Lower body A">
       <div class="grid2"><div><label>Date</label><input name="date" type="date" value="${w?.scheduled_date || today()}"></div><div></div></div>
       <label>Notes</label><textarea name="notes" placeholder="Focus for today, how it should feel">${esc(w?.notes || "")}</textarea>
       <p class="muted" style="margin-top:8px">Equipment: ${(c.equipment || []).map(esc).join(", ") || "not set"}${c.weights_note ? `. Weights: ${esc(c.weights_note)}` : ""}</p></div>
     <div id="sections"></div>
-    <div class="grid2" style="margin-top:16px"><button class="block">Save workout</button>${w ? `<button type="button" class="danger" id="del">Delete</button>` : ""}</div></form>`);
+    <div class="grid2" style="margin-top:16px"><button class="block">Save workout</button>${w ? `<button type="button" class="danger" id="del">Delete</button>` : ""}</div>
+    <button type="button" class="secondary block" id="saveTpl" style="margin-top:10px">Save as template</button></form>`);
   draw();
+  const stripItem = (i) => ({ exercise_id: i.exercise_id, section: i.section, target_sets: i.target_sets ?? null, target_reps: i.target_reps ?? null,
+    target_weight_kg: i.target_weight_kg ?? null, target_seconds: i.target_seconds ?? null, rest_seconds: i.rest_seconds ?? null, notes: i.notes || null });
+  $("#tpl")?.addEventListener("change", (e) => {
+    const t = templates.find((x) => x.id === e.target.value); if (!t) return;
+    items = (t.items || []).filter((i) => lib.some((x) => x.id === i.exercise_id)).map((i) => ({ ...i, section: sectionOf(i) }));
+    const f = $("#wf"); f.name.value = t.name; if (t.notes) f.notes.value = t.notes;
+    draw(); toast(`Loaded "${t.name}". Adjust it for ${firstName(c)}, then save.`);
+  });
+  $("#saveTpl").addEventListener("click", async () => {
+    if (!items.length) return toast("Add at least one exercise first");
+    const name = prompt("Template name", $("#wf").name.value || "New template"); if (!name) return;
+    const ordered = SECTIONS.flatMap((sec) => items.filter((it) => it.section === sec.key));
+    const { error } = await sb.from("workout_templates").insert({ trainer_id: me.id, name: name.trim().slice(0, 120), notes: $("#wf").notes.value || null, items: ordered.map(stripItem) });
+    if (!fail(error)) toast("Saved as a template. Assign it from Today, Templates.");
+  });
   $("#del")?.addEventListener("click", async () => {
     if (!confirm("Delete this workout and its logged sets?")) return;
     const { error } = await sb.from("workouts").delete().eq("id", w.id); if (!fail(error)) go("client/" + clientId);
@@ -1546,6 +2132,58 @@ async function exerciseEditor(id) {
     const { error } = isNew ? await sb.from("exercises").insert(row) : await sb.from("exercises").update(row).eq("id", id);
     btn.disabled = false; btn.textContent = "Save to library";
     if (!fail(error)) { toast("Saved to library"); go("library"); }
+  };
+}
+
+async function templatesView() {
+  const { data } = await sb.from("workout_templates").select("*").order("name");
+  render(`<button class="back" onclick="location.hash='#/dash'">Back</button><h1>Templates</h1>
+    <p class="muted">Save any workout as a template from the workout builder. Then give it to several clients at once, or repeat it weekly as a programme.</p>
+    <div class="card">${(data || []).map((t) => `<a class="list-item" href="#/template/${t.id}"><div class="grow"><b>${esc(t.name)}</b><div class="muted">${(t.items || []).length} exercises</div></div><span class="chip on">Assign</span></a>`).join("")
+      || `<div class="empty">No templates yet. Open any client's workout and tap Save as template.</div>`}</div>`);
+}
+
+async function assignView(id) {
+  const [{ data: t }, { data: clients }, { data: lib }] = await Promise.all([
+    sb.from("workout_templates").select("*").eq("id", id).single(),
+    sb.from("profiles").select("id, full_name, equipment").eq("trainer_id", me.id).order("full_name"),
+    sb.from("exercises").select("id, name, equipment").eq("trainer_id", me.id),
+  ]);
+  if (!t) return render(`<div class="empty">Template not found.</div>`);
+  const ex = (eid) => (lib || []).find((x) => x.id === eid) || { name: "Exercise", equipment: [] };
+  const needs = (cl) => [...new Set(t.items.flatMap((i) => missingEquipment(ex(i.exercise_id), cl.equipment)))];
+  render(`<button class="back" onclick="location.hash='#/templates'">Back to templates</button><h1>${esc(t.name)}</h1>
+    <div class="card">${SECTIONS.map((sec) => { const its = t.items.filter((i) => sectionOf(i) === sec.key); return its.length ? `<p class="muted" style="margin:6px 0 2px">${sec.key}</p>
+      <ol class="steps" style="margin:0 0 6px">${its.map((i) => `<li>${esc(ex(i.exercise_id).name)} <span class="muted">${esc(targetText(i))}</span></li>`).join("")}</ol>` : ""; }).join("")}</div>
+    <form class="card" id="as"><h3>Give it to</h3>
+      <div id="asC">${(clients || []).map((cl) => `<span class="chip" data-c="${cl.id}" role="button">${esc(cl.full_name)}${needs(cl).length ? " (needs kit)" : ""}</span>`).join("") || `<span class="muted">No clients yet.</span>`}</div>
+      <p class="muted" style="margin:6px 0 0">"Needs kit" means they're missing equipment for at least one exercise. Open their workout afterwards to swap it.</p>
+      <div class="grid2"><div><label for="asD">First date</label><input id="asD" type="date" value="${today()}"></div>
+        <div><label for="asW">Repeat</label><select id="asW">${[[1, "Once"], [2, "Weekly for 2 weeks"], [4, "Weekly for 4 weeks"], [6, "Weekly for 6 weeks"], [8, "Weekly for 8 weeks"], [12, "Weekly for 12 weeks"]].map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></div></div>
+      <button class="block" style="margin-top:14px">Assign</button></form>
+    <button class="danger block" id="tDel">Delete template</button>`);
+  $$("#asC .chip").forEach((ch) => (ch.onclick = () => ch.classList.toggle("on")));
+  $("#tDel").onclick = async () => {
+    if (!confirm("Delete this template? Workouts already given to clients stay.")) return;
+    const { error } = await sb.from("workout_templates").delete().eq("id", t.id); if (!fail(error)) go("templates");
+  };
+  $("#as").onsubmit = async (e) => {
+    e.preventDefault();
+    const ids = $$("#asC .chip.on").map((ch) => ch.dataset.c); if (!ids.length) return toast("Choose at least one client");
+    const weeks = Number($("#asW").value); const start = $("#asD").value || today();
+    const btn = $("#as button.block"); btn.disabled = true; btn.textContent = "Assigning…";
+    for (const cid of ids) {
+      for (let k = 0; k < weeks; k++) {
+        const d = new Date(start); d.setDate(d.getDate() + 7 * k);
+        const { data: wk, error } = await sb.from("workouts").insert({ trainer_id: me.id, client_id: cid, name: weeks > 1 ? `${t.name} (week ${k + 1})` : t.name,
+          scheduled_date: d.toISOString().slice(0, 10), notes: t.notes || null }).select().single();
+        if (fail(error)) { btn.disabled = false; btn.textContent = "Assign"; return; }
+        const { error: ie } = await sb.from("workout_items").insert(t.items.map((i, pos) => ({ ...i, section: sectionOf(i), workout_id: wk.id, position: pos })));
+        if (fail(ie)) { btn.disabled = false; btn.textContent = "Assign"; return; }
+      }
+      await sb.from("messages").insert({ client_id: cid, sender_id: me.id, body: weeks > 1 ? `Your new ${weeks}-week programme is ready: "${t.name}"` : `New workout ready: "${t.name}"` });
+    }
+    toast(`Assigned to ${ids.length} ${ids.length === 1 ? "client" : "clients"}`); go("dash");
   };
 }
 

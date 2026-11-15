@@ -524,3 +524,164 @@ create policy "progress photos: owner uploads" on storage.objects for insert wit
   bucket_id = 'progress-photos' and public.owner_of(name) = auth.uid() and (select photos_opt_in from public.profiles where id = auth.uid()));
 drop policy if exists "progress photos: owner deletes" on storage.objects;
 create policy "progress photos: owner deletes" on storage.objects for delete using (bucket_id = 'progress-photos' and public.owner_of(name) = auth.uid());
+
+-- =====================================================================
+-- CALORIES OR POINTS (client chooses how to count food)
+-- =====================================================================
+alter table public.profiles add column if not exists nutrition_mode text not null default 'points';
+do $$ begin
+  alter table public.profiles add constraint profiles_nutrition_mode_check check (nutrition_mode in ('points','calories'));
+exception when duplicate_object then null; end $$;
+alter table public.profiles add column if not exists daily_kcal int;
+alter table public.food_logs add column if not exists kcal numeric;
+alter table public.custom_foods add column if not exists kcal numeric;
+
+-- =====================================================================
+-- HEALTH SCREENING, RISK ACKNOWLEDGEMENT AND EMERGENCY CONTACT
+-- Health information is special personal information under POPIA:
+-- only the client and their own coach can see it.
+-- =====================================================================
+create table if not exists public.health_screens (
+  client_id          uuid primary key references public.profiles(id) on delete cascade,
+  answers            jsonb not null default '{}',
+  flags              int not null default 0,          -- number of "yes" answers (set by the database)
+  details            text check (length(details) <= 1000),
+  emergency_name     text check (length(emergency_name) <= 120),
+  emergency_phone    text check (length(emergency_phone) <= 40),
+  waiver_accepted_at timestamptz not null,
+  health_consent_at  timestamptz not null,
+  cleared_at         timestamptz,                     -- set by the coach once she's happy (e.g. doctor's note)
+  updated_at         timestamptz not null default now()
+);
+alter table public.health_screens enable row level security;
+drop policy if exists "client owns health screen" on public.health_screens;
+create policy "client owns health screen" on public.health_screens for all
+  using (client_id = auth.uid()) with check (client_id = auth.uid());
+drop policy if exists "coach reads health screen" on public.health_screens;
+create policy "coach reads health screen" on public.health_screens for select using (public.coaches(client_id));
+drop policy if exists "coach clears health screen" on public.health_screens;
+create policy "coach clears health screen" on public.health_screens for update using (public.coaches(client_id));
+
+create or replace function public.guard_health_screen()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  new.flags := (select count(*) from jsonb_each(new.answers) where value = 'true'::jsonb);
+  new.updated_at := now();
+  if auth.uid() is null then return new; end if;
+  if tg_op = 'UPDATE' and public.is_trainer() then
+    -- the coach may only record clearance
+    new.answers := old.answers; new.flags := old.flags; new.details := old.details;
+    new.emergency_name := old.emergency_name; new.emergency_phone := old.emergency_phone;
+    new.waiver_accepted_at := old.waiver_accepted_at; new.health_consent_at := old.health_consent_at;
+    new.updated_at := old.updated_at;
+    return new;
+  end if;
+  -- the client can never clear themselves; a changed answer needs fresh clearance
+  if tg_op = 'INSERT' then new.cleared_at := null;
+  elsif new.answers is distinct from old.answers then new.cleared_at := null;
+  else new.cleared_at := old.cleared_at; end if;
+  return new;
+end; $$;
+drop trigger if exists guard_health_screen on public.health_screens;
+create trigger guard_health_screen before insert or update on public.health_screens
+  for each row execute function public.guard_health_screen();
+
+-- =====================================================================
+-- COACH NOTES (private to the coach)
+-- =====================================================================
+create table if not exists public.coach_notes (
+  id          uuid primary key default gen_random_uuid(),
+  trainer_id  uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  client_id   uuid not null references public.profiles(id) on delete cascade,
+  body        text not null check (length(body) between 1 and 2000),
+  created_at  timestamptz not null default now()
+);
+create index if not exists coach_notes_client_idx on public.coach_notes (client_id, created_at);
+alter table public.coach_notes enable row level security;
+drop policy if exists "coach owns notes" on public.coach_notes;
+create policy "coach owns notes" on public.coach_notes for all
+  using (trainer_id = auth.uid() and public.coaches(client_id))
+  with check (trainer_id = auth.uid() and public.coaches(client_id));
+
+-- =====================================================================
+-- WORKOUT TEMPLATES (build once, assign to many clients or weeks)
+-- =====================================================================
+create table if not exists public.workout_templates (
+  id          uuid primary key default gen_random_uuid(),
+  trainer_id  uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  name        text not null check (length(name) <= 120),
+  notes       text,
+  items       jsonb not null default '[]',
+  created_at  timestamptz not null default now()
+);
+alter table public.workout_templates enable row level security;
+drop policy if exists "coach owns templates" on public.workout_templates;
+create policy "coach owns templates" on public.workout_templates for all
+  using (trainer_id = auth.uid() and public.is_trainer())
+  with check (trainer_id = auth.uid() and public.is_trainer());
+
+-- =====================================================================
+-- REFERRALS, SHARING CONSENT
+-- =====================================================================
+alter table public.profiles add column if not exists referral_code text;
+alter table public.profiles add column if not exists referred_by uuid references public.profiles(id) on delete set null;
+alter table public.profiles add column if not exists share_consent_at timestamptz;  -- ok for coach to post before/after
+update public.profiles set referral_code = upper(substr(md5(id::text), 1, 8)) where referral_code is null;
+create unique index if not exists profiles_referral_code_idx on public.profiles (referral_code);
+
+create or replace function public.handle_new_user()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare ref uuid; code text := upper(substr(md5(new.id::text), 1, 8));
+begin
+  while exists (select 1 from public.profiles where referral_code = code) loop
+    code := upper(substr(md5(random()::text), 1, 8));
+  end loop;
+  select id into ref from public.profiles
+    where referral_code = upper(nullif(trim(new.raw_user_meta_data->>'ref'), '')) limit 1;
+  insert into public.profiles (id, full_name, email, popia_consent_at, referral_code, referred_by)
+  values (
+    new.id,
+    coalesce(new.raw_user_meta_data->>'full_name', ''),
+    new.email,
+    case when (new.raw_user_meta_data->>'popia_consent') = 'true' then now() else null end,
+    code,
+    ref
+  );
+  return new;
+end; $$;
+
+create or replace function public.protect_profile_fields()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then return new; end if;
+  if new.role is distinct from old.role then
+    raise exception 'Role can only be changed by the app owner';
+  end if;
+  if (new.trainer_id is distinct from old.trainer_id
+      or new.plan is distinct from old.plan
+      or new.access_until is distinct from old.access_until) and not public.is_trainer() then
+    raise exception 'Only the trainer can change access';
+  end if;
+  if new.referral_code is distinct from old.referral_code or new.referred_by is distinct from old.referred_by then
+    raise exception 'Referral details can''t be changed';
+  end if;
+  return new;
+end; $$;
+
+-- =====================================================================
+-- WATER (one running total per client per day)
+-- =====================================================================
+alter table public.profiles add column if not exists water_goal_ml int check (water_goal_ml between 500 and 8000);
+create table if not exists public.water_logs (
+  client_id  uuid not null references public.profiles(id) on delete cascade,
+  log_date   date not null default current_date,
+  ml         int not null default 0 check (ml between 0 and 15000),
+  updated_at timestamptz not null default now(),
+  primary key (client_id, log_date)
+);
+alter table public.water_logs enable row level security;
+drop policy if exists "client owns water" on public.water_logs;
+create policy "client owns water" on public.water_logs for all
+  using (client_id = auth.uid()) with check (client_id = auth.uid());
+drop policy if exists "coach reads water" on public.water_logs;
+create policy "coach reads water" on public.water_logs for select using (public.coaches(client_id));

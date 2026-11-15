@@ -1,4 +1,12 @@
 const files = {}; // demo storage: path -> local object URL
+const DEMO_AI = `This is the demo, so here's a sample answer.
+
+**Jess first.** Her pass ends this week and her health check is waiting for your review. Clear the knee question, then send a renewal nudge tied to her 10 km goal.
+
+**Thandi is on a roll.** She's lifting heavier every week and her weight is trending down. A quick shout-out keeps that going:
+- "14 kg squats for 12 reps. Three weeks ago that was 10 kg. Proud of you."
+
+**For everyone:** a 7-day water challenge would suit this week, with 2 L a day as the target.`;
 // Demo mode: an in-memory stand-in for Supabase with sample data, so the app can be
 // tried without any setup. Nothing is saved — refreshing resets the demo.
 // Only used when CONFIG.DEMO is true.
@@ -17,17 +25,18 @@ const at = (offset, hour = 7) => `${day(offset)}T${String(hour).padStart(2, "0")
 function seed() {
   const db = {
     profiles: [
-      { id: TRAINER, full_name: "Your coach", email: "coach@demo", role: "trainer", trainer_id: null, equipment: [], tracks: [], library_free: false, plan: "free", created_at: at(-90) },
+      { id: TRAINER, full_name: "Your coach", email: "coach@demo", role: "trainer", trainer_id: null, equipment: [], tracks: [], library_free: false, plan: "free", referral_code: "COACH001", created_at: at(-90) },
       { id: CLIENT, full_name: "Thandi Mokoena", email: "thandi@demo", role: "client", trainer_id: TRAINER, goal: "Lose 6 kg and deadlift my body weight", weights_note: "Dumbbells 5 kg and 8 kg, 12 kg kettlebell at home; gym on Saturdays",
         equipment: ["Dumbbells", "Resistance bands", "Yoga mat"], tracks: ["exercise", "nutrition"], daily_points: 32, goal_weight_kg: 78,
-        plan: "library", access_until: day(11), popia_consent_at: at(-40), created_at: at(-40) },
+        plan: "library", access_until: day(11), popia_consent_at: at(-40), created_at: at(-40), referral_code: "THANDI01", nutrition_mode: "points", daily_kcal: 1600 },
       { id: CLIENT2, full_name: "Jess van Wyk", email: "jess@demo", role: "client", trainer_id: TRAINER, goal: "Run 10 km", equipment: ["Full gym"],
-        tracks: ["exercise"], plan: "pt", access_until: day(20), popia_consent_at: at(-20), created_at: at(-20) },
+        tracks: ["exercise"], plan: "pt", access_until: day(4), popia_consent_at: at(-20), created_at: at(-20), referral_code: "JESS0001" },
       { id: PENDING, full_name: "Sipho Dlamini", email: "sipho@demo", role: "client", trainer_id: null, equipment: [], tracks: ["exercise"],
-        plan: "free", popia_consent_at: at(-1), created_at: at(-1) },
+        plan: "free", popia_consent_at: at(-1), created_at: at(-1), referral_code: "SIPHO001", referred_by: CLIENT },
     ],
     exercises: [], workouts: [], workout_items: [], set_logs: [], activities: [], body_metrics: [],
     food_logs: [], custom_foods: [], messages: [], challenge_completions: [], checkins: [], progress_photos: [],
+    health_screens: [], coach_notes: [], workout_templates: [], water_logs: [],
   };
   const ex = (name, muscle_group, equipment, cues, instructions) => { const e = { id: uid(), trainer_id: TRAINER, name, muscle_group, equipment, cues, instructions, video_path: null, categories: [], created_at: at(-60) }; db.exercises.push(e); return e; };
   const squat = ex("Goblet squat", "Legs", ["Kettlebell"], ["Chest up, elbows inside knees", "Sit between your heels", "Drive through the middle of your foot", "Breathe out as you stand"], "Hold the bell at your chest. Feet just wider than hips, toes slightly out.");
@@ -99,6 +108,13 @@ function seed() {
   [[CLIENT, -2, 9, "Finished the full body session. Squats felt strong today!"], [TRAINER, -2, 10, "Love that. 14 kg for 12 reps is a big jump from where you started. Let's push the deadlifts next."],
    [TRAINER, -1, 17, "New workout is ready for tomorrow: Lower body B."], [CLIENT, -1, 18, "Thanks coach, I'll do it before work."]]
     .forEach(([sender_id, off, h, body]) => db.messages.push({ id: uid(), client_id: CLIENT, sender_id, body, read_at: sender_id === CLIENT ? at(off, h + 1) : null, created_at: at(off, h) }));
+  // Health checks: Thandi all clear, Jess flagged a knee and waits for clearance
+  const hq = (yes) => Object.fromEntries(["heart", "chest", "dizzy", "chronic", "meds", "joint", "pregnant", "supervised"].map((k) => [k, yes.includes(k)]));
+  db.health_screens.push({ client_id: CLIENT, answers: hq([]), flags: 0, details: null, emergency_name: "Sizwe Mokoena", emergency_phone: "082 555 0101", waiver_accepted_at: at(-40), health_consent_at: at(-40), cleared_at: null, updated_at: at(-40) });
+  db.health_screens.push({ client_id: CLIENT2, answers: hq(["joint"]), flags: 1, details: "Left knee: meniscus repair in 2023, fine for running.", emergency_name: "Pieter van Wyk", emergency_phone: "083 555 0123", waiver_accepted_at: at(-20), health_consent_at: at(-20), cleared_at: null, updated_at: at(-20) });
+  db.coach_notes.push({ id: uid(), trainer_id: TRAINER, client_id: CLIENT, body: "Prefers early sessions. Building up to a bodyweight deadlift by March.", created_at: at(-10) });
+  [[-6, 1750], [-5, 2250], [-4, 2500], [-3, 3000], [-2, 2000], [-1, 2750], [0, 750]].forEach(([off, ml]) => db.water_logs.push({ client_id: CLIENT, log_date: day(off), ml, updated_at: at(off, 18) }));
+  db.food_logs.forEach((f) => (f.kcal = f.points * 50));
   db.messages.push({ id: uid(), client_id: CLIENT2, sender_id: CLIENT2, body: "Can we move Thursday's session to 6pm?", read_at: null, created_at: at(0, 7) });
   return db;
 }
@@ -213,8 +229,10 @@ export function createDemoClient() {
         files[path] = URL.createObjectURL(blob); return { data: { path }, error: null };
       },
       remove: async (paths) => { paths.forEach((x) => delete files[x]); return {}; },
+      download: async (path) => (files[path] ? { data: await (await fetch(files[path])).blob(), error: null } : { data: null, error: { message: "Not found" } }),
     }) },
-    functions: { invoke: async (_n, { body }) => ({ data: { cues: [`Set up tall for the ${body.name.toLowerCase()}`, "Brace your core before you move", "Control the lowering for three seconds", "Breathe out on the hardest part", "Stop the set when your form slips"] } }) },
+    functions: { invoke: async (_n, { body }) => _n === "coach-ai" ? { data: { text: DEMO_AI } }
+      : ({ data: { cues: [`Set up tall for the ${body.name.toLowerCase()}`, "Brace your core before you move", "Control the lowering for three seconds", "Breathe out on the hardest part", "Stop the set when your form slips"] } }) },
     channel: () => ({ on() { return this; }, subscribe() { return this; } }),
     removeChannel: () => {},
   };
