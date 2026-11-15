@@ -27,19 +27,19 @@ export const MOVES = {
     frames: [P({ torso: 28, head: 38, th: [292, 292], sh: [258, 258], ua: [246, 246], fa: [244, 244] }), P({ torso: 92, ua: [358, 358], fa: [2, 2] })],
   },
   lunge: {
-    label: "Reverse lunge", pin: "ankle", x: 128, secs: 3.4,
+    mat: true, label: "Reverse lunge", pin: "ankle", x: 128, secs: 3.4,
     frames: [P({ ua: [268, 272], fa: [270, 274] }), P({ ua: [268, 272], fa: [270, 274], th: [352, 246], sh: [272, 190], ft: [0, 212] })],
   },
   bridge: {
-    label: "Glute bridge", pin: "ankle", x: 140, secs: 3,
+    mat: true, label: "Glute bridge", pin: "ankle", x: 140, secs: 3,
     frames: [P({ torso: 181, head: 180, th: [52, 52], sh: [292, 292], ua: [358, 358], fa: [0, 0] }), P({ torso: 202, head: 186, th: [22, 22], sh: [284, 284], ua: [352, 352], fa: [356, 356] })],
   },
   pushup: {
-    label: "Push-up", pin: "toe", secs: 2.8,
+    mat: true, label: "Push-up", pin: "toe", secs: 2.8,
     frames: [P({ torso: 12, head: 14, th: [192, 192], sh: [192, 192], ft: [296, 296], ua: [272, 272], fa: [272, 272] }), P({ torso: 1, head: 4, th: [186, 186], sh: [186, 186], ft: [292, 292], ua: [150, 150], fa: [288, 288] })],
   },
   plank: {
-    label: "Plank", pin: "toe", secs: 2.6,
+    mat: true, label: "Plank", pin: "toe", secs: 2.6,
     frames: [P({ torso: 10, head: 12, th: [190, 190], sh: [190, 190], ft: [296, 296], ua: [272, 272], fa: [272, 272] }), P({ torso: 10, head: 12, th: [190, 190], sh: [190, 190], ft: [296, 296], ua: [272, 30], fa: [272, 120] })],
   },
   row: {
@@ -51,7 +51,7 @@ export const MOVES = {
     frames: [P({ ua: [252, 256], fa: [86, 88] }), P({ ua: [94, 94], fa: [92, 92] })],
   },
   deadbug: {
-    label: "Dead bug", pin: "hip", secs: 3.2,
+    mat: true, label: "Dead bug", pin: "hip", secs: 3.2,
     frames: [P({ torso: 180, head: 180, th: [90, 90], sh: [0, 0], ft: [90, 90], ua: [90, 90], fa: [90, 90] }), P({ torso: 180, head: 180, th: [8, 90], sh: [4, 0], ft: [60, 90], ua: [90, 172], fa: [90, 174] })],
   },
   calf: {
@@ -63,12 +63,12 @@ export const MOVES = {
     frames: [P({ ua: [268, 270], fa: [268, 270] }), P({ ua: [262, 264], fa: [96, 100] })],
   },
   mountain: {
-    label: "Mountain climber", pin: "hip", x: 96, secs: 1.2,
+    mat: true, label: "Mountain climber", pin: "hip", x: 96, secs: 1.2,
     frames: [P({ torso: 12, head: 14, th: [190, 190], sh: [190, 190], ft: [296, 296], ua: [272, 272], fa: [272, 272] }),
       P({ torso: 12, head: 14, th: [300, 190], sh: [208, 190], ft: [270, 296], ua: [272, 272], fa: [272, 272] })],
   },
   crunch: {
-    label: "Crunch", pin: "ankle", x: 140, secs: 2.6,
+    mat: true, label: "Crunch", pin: "ankle", x: 140, secs: 2.6,
     frames: [P({ torso: 181, head: 180, th: [52, 52], sh: [292, 292], ua: [120, 120], fa: [330, 330] }), P({ torso: 148, head: 132, th: [52, 52], sh: [292, 292], ua: [100, 100], fa: [330, 330] })],
   },
   highknees: {
@@ -76,7 +76,7 @@ export const MOVES = {
     frames: [P({ th: [352, 272], sh: [272, 270], ua: [300, 236], fa: [40, 268] }), P({ th: [272, 352], sh: [270, 272], ua: [236, 300], fa: [268, 40] })],
   },
   stretch: {
-    label: "Lunge and reach", pin: "ankle", x: 128, secs: 4,
+    mat: true, label: "Lunge and reach", pin: "ankle", x: 128, secs: 4,
     frames: [P({ th: [330, 230], sh: [262, 188], ft: [0, 206], torso: 60, head: 60, ua: [274, 276], fa: [274, 276] }), P({ th: [330, 230], sh: [262, 188], ft: [0, 206], torso: 64, head: 80, ua: [96, 276], fa: [96, 276] })],
   },
 };
@@ -123,7 +123,7 @@ function place(j, pinName, pinX) {
   return { dx: pinX - pin[0], dy: -minY };
 }
 
-const W = 200, H = 162, GROUND = 150;
+const W = 200, H = 162, GROUND = 150, HEAD_R = 8.4;
 function svgPoint(p, off) { return [(p[0] + off.dx).toFixed(1), (GROUND - (p[1] + off.dy)).toFixed(1)]; }
 
 function drawPose(svg, move, pose) {
@@ -135,10 +135,20 @@ function drawPose(svg, move, pose) {
   const seg = (a, b) => { const [x1, y1] = S(a), [x2, y2] = S(b); return `M${x1} ${y1}L${x2} ${y2}`; };
   const limb = (pts) => pts.slice(1).map((p, i) => seg(pts[i], p)).join("");
   const set = (cls, d) => { svg.querySelector("." + cls).setAttribute("d", d); };
-  set("m-far", limb([j.hip, j.legs[1].k, j.legs[1].a, j.legs[1].t]) + limb([j.sh, j.arms[1].e, j.arms[1].h]));
-  set("m-body", seg(j.hip, j.sh) + seg(j.sh, j.neck));
-  set("m-near", limb([j.hip, j.legs[0].k, j.legs[0].a, j.legs[0].t]) + limb([j.sh, j.arms[0].e, j.arms[0].h]));
-  const [hx, hy] = S(j.head); const c = svg.querySelector(".m-head"); c.setAttribute("cx", hx); c.setAttribute("cy", hy);
+  const near = 0, far = 1;
+  const legD = (i) => [seg(j.hip, j.legs[i].k), seg(j.legs[i].k, j.legs[i].a), seg(j.legs[i].a, j.legs[i].t)];
+  const armD = (i) => [seg(j.sh, j.arms[i].e), seg(j.arms[i].e, j.arms[i].h)];
+  const [fT, fS, fF] = legD(far), [nT, nS, nF] = legD(near), [fU, fL] = armD(far), [nU, nL] = armD(near);
+  set("m-thigh-f", fT); set("m-shin-f", fS); set("m-shoe-f", fF); set("m-uarm-f", fU); set("m-farm-f", fL);
+  set("m-thigh-n", nT); set("m-shin-n", nS); set("m-shoe-n", nF); set("m-uarm-n", nU); set("m-farm-n", nL);
+  // crop top over the chest, leggings waistband at the hips
+  const waist = [j.hip[0] + (j.sh[0] - j.hip[0]) * 0.32, j.hip[1] + (j.sh[1] - j.hip[1]) * 0.32];
+  set("m-top", seg(waist, j.sh)); set("m-waist", seg(j.hip, waist)); set("m-neck", seg(j.sh, j.neck));
+  const [hx, hy] = S(j.head);
+  const back = ((pose.head + 90) * Math.PI) / 180, bun = ((pose.head + 40) * Math.PI) / 180, r = HEAD_R;
+  const hair = svg.querySelector(".m-hair"); hair.setAttribute("cx", (+hx + Math.cos(back) * 2.4).toFixed(1)); hair.setAttribute("cy", (+hy - Math.sin(back) * 2.4).toFixed(1));
+  const bn = svg.querySelector(".m-bun"); bn.setAttribute("cx", (+hx + Math.cos(bun) * r * 1.25).toFixed(1)); bn.setAttribute("cy", (+hy - Math.sin(bun) * r * 1.25).toFixed(1));
+  const c = svg.querySelector(".m-head"); c.setAttribute("cx", hx); c.setAttribute("cy", hy);
   const props = svg.querySelector(".m-props");
   if (move.prop && showProps) {
     const hands = [S(j.arms[0].h), S(j.arms[1].h)];
@@ -160,7 +170,14 @@ export function moveSvg(key, { animate = true, label = true, props = true } = {}
     <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${m.label} demonstration">
       <circle class="m-ring" cx="${W - 34}" cy="40" r="46"/>
       <line class="m-ground" x1="14" y1="${GROUND + 1.5}" x2="${W - 14}" y2="${GROUND + 1.5}"/>
-      <path class="m-far"/><g class="m-props"></g><path class="m-body"/><path class="m-near"/><circle class="m-head" r="${L.head}"/>
+      ${m.mat ? `<rect class="m-mat" x="10" y="${GROUND - 2}" width="${W - 20}" height="6" rx="3"/>` : ""}
+      <path class="m-uarm-f m-skin-f"/><path class="m-farm-f m-skin-f"/>
+      <path class="m-thigh-f m-legs-f"/><path class="m-shin-f m-legs-f"/><path class="m-shoe-f"/>
+      <g class="m-props"></g>
+      <path class="m-waist"/><path class="m-top"/><path class="m-neck m-skin"/>
+      <circle class="m-bun" r="${(HEAD_R * 0.62).toFixed(1)}"/><circle class="m-hair" r="${(HEAD_R + 1).toFixed(1)}"/><circle class="m-head" r="${HEAD_R}"/>
+      <path class="m-thigh-n m-legs"/><path class="m-shin-n m-legs"/><path class="m-shoe-n"/>
+      <path class="m-uarm-n m-skin"/><path class="m-farm-n m-skin"/>
     </svg>${label ? `<figcaption>Animated demo of the movement pattern. Your coach's video will replace it.</figcaption>` : ""}</figure>`;
 }
 

@@ -383,10 +383,19 @@ button.small svg { width: 16px; height: 16px; }
 .move figcaption { font-size: .74rem; color: var(--muted); padding: 0 12px 10px; }
 .m-ring { fill: none; stroke: var(--primary); stroke-width: 10; opacity: .16; }
 .m-ground { stroke: var(--text); stroke-width: 1.5; opacity: .22; }
-.m-near, .m-body { fill: none; stroke: var(--text); stroke-width: 4.2; stroke-linecap: round; stroke-linejoin: round; }
-.m-far { fill: none; stroke: var(--primary); stroke-width: 4.2; stroke-linecap: round; stroke-linejoin: round; opacity: .8; }
-.m-head { fill: var(--text); }
-.m-props * { fill: var(--primary); }
+/* Illustrated figure: skin, sage crop top, slate leggings, cream trainers, hair in a bun */
+.move { --skin: #C68B63; --skin-far: #9E6A48; --top: #9CB59A; --legs: #5D6F8F; --legs-far: #46546E; --shoe: #EFE8DC; --shoe-far: #BDB7AC; --hair: #2A1F1A; }
+.move path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.m-skin { stroke: var(--skin); } .m-skin-f { stroke: var(--skin-far); }
+.m-uarm-n, .m-uarm-f { stroke-width: 7.6; } .m-farm-n, .m-farm-f { stroke-width: 6.4; }
+.m-legs { stroke: var(--legs); } .m-legs-f { stroke: var(--legs-far); }
+.m-thigh-n, .m-thigh-f { stroke-width: 13; } .m-shin-n, .m-shin-f { stroke-width: 9.6; }
+.m-shoe-n { stroke: var(--shoe); stroke-width: 7.5; } .m-shoe-f { stroke: var(--shoe-far); stroke-width: 7.5; }
+.m-top { stroke: var(--top); stroke-width: 18; } .m-waist { stroke: var(--legs); stroke-width: 16.5; }
+.m-neck { stroke-width: 6.5; }
+.m-head { fill: var(--skin); } .m-hair, .m-bun { fill: var(--hair); }
+.m-mat { fill: rgba(156, 181, 154, .32); }
+.m-props * { fill: #B9B4AA; }
 .m-props .far { opacity: .55; }
 .tile .ph .move { position: absolute; inset: 0; margin: 0; border-radius: 0; background: transparent; display: grid; place-items: start center; padding-top: 10%; }
 .tile .ph .move svg { max-height: none; }
