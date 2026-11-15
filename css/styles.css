@@ -369,3 +369,10 @@ button.small svg { width: 16px; height: 16px; }
 
 @media (prefers-reduced-motion: reduce) { .month i.lit { animation: none; } }
 .auth-hero .forms .f-dot { display: none; }
+
+/* Library shelves: one scrolling row per exercise type */
+.shelf { display: grid; grid-auto-flow: column; grid-auto-columns: 42%; gap: 10px; overflow-x: auto; margin: 0 -18px; padding: 0 18px 4px; scroll-snap-type: x mandatory; scroll-padding-inline: 18px; scrollbar-width: none; }
+.shelf::-webkit-scrollbar { display: none; }
+.shelf .tile { scroll-snap-align: start; }
+.sec a[data-jump] { font-size: .9rem; text-decoration: none; }
+#ty .chip { margin-bottom: 6px; }
