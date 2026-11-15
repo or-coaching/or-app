@@ -568,3 +568,12 @@ details.qa summary { cursor: pointer; font-weight: 600; color: var(--primary); f
 details.qa form { margin-top: 6px; }
 .ex-tile .ph { position: relative; }
 .ex-tile .ph > svg, .ex-tile .ph .forms { position: absolute; inset: 0; width: 100%; height: 100%; }
+/* Equipment and lines in the exercise animations */
+.m-eq { fill: #46524C; }
+.m-eq-line { fill: none; stroke: #46524C; stroke-width: 4; }
+.move path.m-cable { stroke: #9AA39C; stroke-width: 1.6; }
+.move path.m-cable.thick { stroke-width: 4.5; stroke: #8E9790; }
+.move path.m-band { stroke: var(--warn); stroke-width: 2.6; }
+.move path.m-rope { stroke: var(--text); stroke-width: 1.6; }
+.m-props .plate { fill: #79837C; }
+.move.front { --skin-far: var(--skin); --legs-far: var(--legs); --shoe-far: var(--shoe); }
