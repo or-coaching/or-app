@@ -1,3 +1,4 @@
+const files = {}; // demo storage: path -> local object URL
 // Demo mode: an in-memory stand-in for Supabase with sample data, so the app can be
 // tried without any setup. Nothing is saved — refreshing resets the demo.
 // Only used when CONFIG.DEMO is true.
@@ -26,7 +27,7 @@ function seed() {
         plan: "free", popia_consent_at: at(-1), created_at: at(-1) },
     ],
     exercises: [], workouts: [], workout_items: [], set_logs: [], activities: [], body_metrics: [],
-    food_logs: [], custom_foods: [], messages: [], challenge_completions: [], checkins: [],
+    food_logs: [], custom_foods: [], messages: [], challenge_completions: [], checkins: [], progress_photos: [],
   };
   const ex = (name, muscle_group, equipment, cues, instructions) => { const e = { id: uid(), trainer_id: TRAINER, name, muscle_group, equipment, cues, instructions, video_path: null, categories: [], created_at: at(-60) }; db.exercises.push(e); return e; };
   const squat = ex("Goblet squat", "Legs", ["Kettlebell"], ["Chest up, elbows inside knees", "Sit between your heels", "Drive through the middle of your foot", "Breathe out as you stand"], "Hold the bell at your chest. Feet just wider than hips, toes slightly out.");
@@ -204,11 +205,14 @@ export function createDemoClient() {
       async signOut() { session = null; emit("SIGNED_OUT"); return { error: null }; },
       async resetPasswordForEmail() { return { error: { message: "Not available in the demo" } }; },
     },
-    storage: { from: () => ({
-      createSignedUrl: async () => ({ data: { signedUrl: null } }),
-      createSignedUrls: async () => ({ data: [] }),
-      upload: async () => ({ error: { message: "Video uploads are switched off in the demo" } }),
-      remove: async () => ({}),
+    storage: { from: (bucket) => ({
+      createSignedUrl: async (path) => ({ data: { signedUrl: files[path] || null } }),
+      createSignedUrls: async (paths) => ({ data: paths.map((path) => ({ path, signedUrl: files[path] || null })) }),
+      upload: async (path, blob) => {
+        if (bucket === "videos") return { error: { message: "Video uploads are switched off in the demo" } };
+        files[path] = URL.createObjectURL(blob); return { data: { path }, error: null };
+      },
+      remove: async (paths) => { paths.forEach((x) => delete files[x]); return {}; },
     }) },
     functions: { invoke: async (_n, { body }) => ({ data: { cues: [`Set up tall for the ${body.name.toLowerCase()}`, "Brace your core before you move", "Control the lowering for three seconds", "Breathe out on the hardest part", "Stop the set when your form slips"] } }) },
     channel: () => ({ on() { return this; }, subscribe() { return this; } }),

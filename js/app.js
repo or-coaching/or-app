@@ -65,10 +65,33 @@ function toast(msg) {
 function render(html) {
   charts.forEach((c) => c.destroy()); charts = [];
   $("#view").innerHTML = html; window.scrollTo(0, 0);
-  startMoves($("#view"));
+  startMoves($("#view")); hydrateAvatars($("#view"));
 }
 function go(path) { location.hash = "#/" + path; }
 function initials(name) { return (name || "?").split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase(); }
+// Avatar: initials straight away, swapped for the photo once its private link arrives.
+function avatar(p, cls = "") {
+  return `<span class="avatar ${cls}" ${p?.avatar_path ? `data-av="${esc(p.avatar_path)}"` : ""} aria-hidden="true">${esc(initials(p?.full_name))}</span>`;
+}
+const avCache = {};
+async function hydrateAvatars(root = document) {
+  const els = [...root.querySelectorAll("[data-av]")]; if (!els.length) return;
+  const need = [...new Set(els.map((e) => e.dataset.av))].filter((p) => !avCache[p]);
+  if (need.length) {
+    const { data } = await sb.storage.from("avatars").createSignedUrls(need, 60 * 60 * 12);
+    (data || []).forEach((d) => { if (d.signedUrl) avCache[d.path] = d.signedUrl; });
+  }
+  els.forEach((e) => { const u = avCache[e.dataset.av]; if (u) { e.style.backgroundImage = `url("${u}")`; e.classList.add("has-photo"); } });
+}
+// Shrink a photo on the phone before upload. Re-encoding also drops location data.
+async function shrinkImage(file, max = 1080, quality = 0.82) {
+  const bmp = await createImageBitmap(file, { imageOrientation: "from-image" }).catch(() => null);
+  if (!bmp) throw new Error("That file isn't a photo the app can read. Try a JPG or PNG.");
+  const k = Math.min(1, max / Math.max(bmp.width, bmp.height));
+  const c = document.createElement("canvas"); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+  c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+  return await new Promise((res) => c.toBlob(res, "image/jpeg", quality));
+}
 function fmtDate(d) { return d ? new Date(d).toLocaleDateString("en-ZA", { day: "numeric", month: "short" }) : ""; }
 function fmtTime(d) { return new Date(d).toLocaleString("en-ZA", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }); }
 const tracksEx = () => (me?.tracks || ["exercise"]).includes("exercise");
@@ -248,7 +271,7 @@ async function loadMe() {
   const { data } = await sb.from("profiles").select("*").eq("id", session.user.id).single();
   me = data;
   myTrainer = null;
-  if (me?.trainer_id) ({ data: myTrainer } = await sb.from("profiles").select("id, full_name, library_free").eq("id", me.trainer_id).single());
+  if (me?.trainer_id) ({ data: myTrainer } = await sb.from("profiles").select("id, full_name, library_free, avatar_path").eq("id", me.trainer_id).single());
 }
 
 $("#meBtn").onclick = () => go("me");
@@ -318,6 +341,7 @@ function tabs(items, fab = false) {
       ${tracksNut() ? `<a href="#/food">${ICON.food} Food</a>` : ""}<a href="#/roulette">${ICON.dice} Exercise roulette</a><a href="#/passes">${ICON.ticket} Passes</a></div>`);
   });
   $("#meBtn").hidden = !(me?.role === "client" && me.trainer_id);
+  if (me?.avatar_path) { $("#meBtn").innerHTML = avatar(me, "sm"); hydrateAvatars($("#topbar")); }
 }
 
 async function unreadCount() {
@@ -341,7 +365,7 @@ async function route() {
 
   if (me.role === "trainer") {
     tabs([["clients", "clients", "Clients"], ["library", "library", "Library"], ["inbox", "chat", "Chat", badge], ["me", "settings", "Settings"]]);
-    const views = { clients: trainerClients, client: () => trainerClient(a), builder: () => workoutBuilder(a, b),
+    const views = { clients: trainerClients, client: () => trainerClient(a), builder: () => workoutBuilder(a, b), photos: () => photosView(a),
       library: trainerLibrary, exercise: () => exerciseEditor(a), inbox: trainerInbox, chat: () => chatView(a), me: profileView };
     return (views[page] || trainerClients)();
   }
@@ -360,7 +384,7 @@ async function route() {
   tabs([["home", "home", "Today"], ...(tracksEx() ? [["workouts", "train", "Train"]] : []), ...(tracksNut() ? [["food", "food", "Food"]] : []),
     ["library", "library", "Library"], ["chat", "chat", "Coach", badge]], true);
   const views = { home: clientHome, food: () => foodView(a), log: () => logView(a), passes: passesView,
-    roulette: rouletteView, badges: badgesView, recipe: () => recipeView(a), workouts: clientWorkouts, workout: () => workoutView(a), progress: () => progressView(me.id),
+    roulette: rouletteView, badges: badgesView, recipe: () => recipeView(a), photos: () => photosView(), workouts: clientWorkouts, workout: () => workoutView(a), progress: () => progressView(me.id),
     library: clientLibrary, ex: () => clientExercise(a), chat: () => chatView(me.id), me: profileView };
   return (views[page] || clientHome)();
 }
@@ -445,11 +469,12 @@ function celebrateRewards(unlocked) {
 }
 
 async function clientHome() {
-  const [eng, { data: milestones }, { data: rewardRows }, { data: wos }] = await Promise.all([
+  const [eng, { data: milestones }, { data: rewardRows }, { data: wos }, { data: phWeek }] = await Promise.all([
     loadEngagement(),
     sb.rpc("reward_milestones"),
     sb.from("exercises").select("id, name, reward_streak").not("reward_streak", "is", null).order("reward_streak"),
     sb.from("workouts").select("*").eq("client_id", me.id).is("completed_at", null).order("scheduled_date", { nullsFirst: false }).limit(3),
+    me.photos_opt_in ? sb.from("progress_photos").select("id").eq("client_id", me.id).gte("taken_on", weekStart()) : Promise.resolve({ data: [] }),
   ]);
   const food = tracksNut() ? await foodSummary() : null;
   const next = wos?.[0];
@@ -503,9 +528,10 @@ async function clientHome() {
       <div class="challenge"><span class="q">${esc(challenge)}</span>
       ${chDone ? `<button class="small done" disabled>Done</button>` : `<button class="small" id="chDone">Done it</button>`}</div></div>
     ${food ? foodCard(food) : ""}
-    ${ws.some((m) => m.metric_date >= weekStart()) ? "" : `<div class="card weekly"><div class="row between" style="gap:12px"><div><h3>Weekly progress</h3>
-      <p class="muted" style="margin:0">${ws.length ? `Last weigh-in ${fmtDate(ws[ws.length - 1].metric_date)}.` : "No weigh-ins yet."} Log this week's so you and your coach can see the trend.</p></div>
-      <button class="small" onclick="location.hash='#/log/weigh'">${ICON.scale} Log</button></div></div>`}
+    ${(() => { const needW = !ws.some((m) => m.metric_date >= weekStart()); const needP = me.photos_opt_in && !(phWeek || []).length;
+      return needW || needP ? `<div class="card weekly"><h3>Weekly progress</h3>
+        <p class="muted" style="margin:0 0 10px">${needW ? (ws.length ? `Last weigh-in ${fmtDate(ws[ws.length - 1].metric_date)}. ` : "No weigh-ins yet. ") : ""}Log this week's so you and your coach can see the trend.</p>
+        <div class="row" style="gap:8px">${needW ? `<button class="small" onclick="location.hash='#/log/weigh'">${ICON.scale} Weigh-in</button>` : ""}${needP ? `<button class="small secondary" onclick="location.hash='#/photos'">Progress photo</button>` : ""}</div></div>` : ""; })()}
     <div class="sec"><h2>Your month</h2><a href="#/progress">See progress</a></div>
     <div class="card">
       <div style="margin-bottom:8px"><b class="stat" style="font-size:1.5rem">${activeThisMonth}</b> <span class="muted">of ${goal} active days this month</span></div>
@@ -529,6 +555,71 @@ async function clientHome() {
     if (!fail(error)) { toast("Challenge done. That counts towards your streak."); clientHome(); }
   });
   celebrate(eng.earned);
+}
+
+async function photosView(clientId) {
+  const own = !clientId || clientId === me.id; const cid = own ? me.id : clientId;
+  const [{ data: who }, { data: rows }, { data: metrics }] = await Promise.all([
+    own ? Promise.resolve({ data: me }) : sb.from("profiles").select("id, full_name, photos_opt_in").eq("id", cid).single(),
+    sb.from("progress_photos").select("*").eq("client_id", cid).order("taken_on"),
+    sb.from("body_metrics").select("metric_date, weight_kg").eq("client_id", cid).order("metric_date"),
+  ]);
+  const back = own ? `<button class="back" onclick="location.hash='#/me'">Back to profile</button>` : `<button class="back" onclick="location.hash='#/client/${cid}'">Back to ${esc(who?.full_name || "client")}</button>`;
+  if (own && !me.photos_opt_in) return render(`${back}<h1>Progress photos</h1><div class="card"><p>Switch on progress photos in your profile first. They're optional, and only you and your coach can see them.</p><button onclick="location.hash='#/me'">Go to profile</button></div>`);
+  if (!own && !who?.photos_opt_in) return render(`${back}<h1>Progress photos</h1><div class="empty">${esc(who?.full_name || "This client")} hasn't switched on progress photos.</div>`);
+  const list = rows || [];
+  const paths = list.map((r) => r.path);
+  const { data: signed } = paths.length ? await sb.storage.from("progress-photos").createSignedUrls(paths, 60 * 60) : { data: [] };
+  const url = Object.fromEntries((signed || []).map((d) => [d.path, d.signedUrl]));
+  const weightOn = (d) => { const m = (metrics || []).filter((x) => x.weight_kg && x.metric_date <= d).pop(); return m ? m.weight_kg : null; };
+  const weeks = [...new Set(list.map((r) => weekStart(new Date(r.taken_on))))].sort();
+  const thisWeek = list.some((r) => r.taken_on >= weekStart());
+  let before = list[0], after = list[list.length - 1];
+  const draw = () => {
+    const cmp = list.length > 1 ? `<div class="card"><h3>Before and after</h3><div class="compare">
+      ${[["Before", before], ["After", after]].map(([lab, r]) => `<figure><img src="${esc(url[r.path] || "")}" alt="${lab}: ${esc(r.angle)} photo from ${fmtDate(r.taken_on)}">
+        <figcaption><b>${lab}</b> ${fmtDate(r.taken_on)}${weightOn(r.taken_on) ? `, ${weightOn(r.taken_on)} kg` : ""}</figcaption></figure>`).join("")}</div>
+      ${weightOn(before.taken_on) && weightOn(after.taken_on) ? `<p class="muted" style="margin:10px 0 0">Change: <b class="${weightOn(after.taken_on) <= weightOn(before.taken_on) ? "vs up" : "vs down"}">${(weightOn(after.taken_on) - weightOn(before.taken_on)).toFixed(1)} kg</b> over ${Math.max(1, Math.round((new Date(after.taken_on) - new Date(before.taken_on)) / 6048e5))} weeks</p>` : ""}
+      <p class="muted" style="margin:8px 0 0">Tap any photo below to set it as before or after.</p></div>` : "";
+    $("#phMain").innerHTML = `${cmp}
+      ${weeks.slice().reverse().map((wk) => `<div class="sec"><h2>Week of ${fmtDate(wk)}</h2></div><div class="ph-grid">${list.filter((r) => weekStart(new Date(r.taken_on)) === wk).map((r) =>
+        `<div class="ph-item"><button type="button" class="ph-pick" data-ph="${r.id}"><img src="${esc(url[r.path] || "")}" alt="${esc(r.angle)} photo from ${fmtDate(r.taken_on)}" loading="lazy"></button>
+          <div class="row between"><span class="muted">${esc(r.angle)}, ${fmtDate(r.taken_on)}</span>${own ? `<button type="button" class="small secondary" data-phdel="${r.id}" aria-label="Delete photo">${ICON.close}</button>` : ""}</div></div>`).join("")}</div>`).join("")
+      || `<div class="empty">${own ? "No photos yet. Add your first one above. Same time of day, same spot and same angle each week gives the fairest comparison." : "No photos yet."}</div>`}`;
+    $$("[data-ph]").forEach((b) => (b.onclick = () => {
+      const r = list.find((x) => x.id === b.dataset.ph);
+      if (r.taken_on <= before.taken_on || r === before) before = r; else after = r;
+      if (before.taken_on > after.taken_on) [before, after] = [after, before];
+      draw(); window.scrollTo({ top: 0, behavior: "smooth" });
+    }));
+    $$("[data-phdel]").forEach((b) => (b.onclick = async () => {
+      if (!confirm("Delete this photo? This can't be undone.")) return;
+      const r = list.find((x) => x.id === b.dataset.phdel);
+      await sb.storage.from("progress-photos").remove([r.path]);
+      const { error } = await sb.from("progress_photos").delete().eq("id", r.id);
+      if (!fail(error)) { toast("Photo deleted"); photosView(); }
+    }));
+  };
+  render(`${back}<h1>${own ? "My progress photos" : `${esc(who.full_name.split(" ")[0])}'s progress photos`}</h1>
+    ${own ? `<form class="card" id="phUp"><h3>${thisWeek ? "Add another photo this week" : "This week's photo"}</h3>
+      <p class="muted" style="margin:0 0 6px">Optional. Only you and your coach can see these.</p>
+      <div class="grid2"><div><label for="phAngle">Angle</label><select id="phAngle">${["Front", "Side", "Back"].map((a) => `<option>${a}</option>`).join("")}</select></div>
+      <div><label for="phDate">Date</label><input id="phDate" type="date" value="${today()}" max="${today()}"></div></div>
+      <label class="btn block" style="margin-top:12px;color:var(--on-primary)">${ICON.plus} Choose or take a photo<input type="file" id="phFile" accept="image/*" hidden></label></form>` : ""}
+    <div id="phMain"></div>`);
+  draw();
+  $("#phFile")?.addEventListener("change", async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    try {
+      toast("Uploading…");
+      const blob = await shrinkImage(file);
+      const path = `${me.id}/${Date.now()}.jpg`;
+      const { error } = await sb.storage.from("progress-photos").upload(path, blob, { contentType: "image/jpeg" }); if (fail(error)) return;
+      const { error: ie } = await sb.from("progress_photos").insert({ client_id: me.id, taken_on: $("#phDate").value || today(), angle: $("#phAngle").value, path });
+      if (fail(ie)) { await sb.storage.from("progress-photos").remove([path]); return; }
+      toast("Photo saved"); photosView();
+    } catch (err) { toast(err.message); }
+  });
 }
 
 async function badgesView() {
@@ -1016,12 +1107,12 @@ function drawProgress(metrics, pbs) {
 async function chatView(clientId) {
   if (!clientId) return go(me.role === "trainer" ? "inbox" : "home");
   let other = null;
-  if (me.role === "trainer") ({ data: other } = await sb.from("profiles").select("full_name").eq("id", clientId).single());
-  else ({ data: other } = await sb.from("profiles").select("full_name").eq("id", me.trainer_id).single());
+  if (me.role === "trainer") ({ data: other } = await sb.from("profiles").select("full_name, avatar_path").eq("id", clientId).single());
+  else ({ data: other } = await sb.from("profiles").select("full_name, avatar_path").eq("id", me.trainer_id).single());
 
   const { data: msgs } = await sb.from("messages").select("*").eq("client_id", clientId).order("created_at").limit(300);
   render(`${me.role === "trainer" ? `<button class="back" onclick="location.hash='#/inbox'">← Inbox</button>` : ""}
-    <div class="row" style="margin-bottom:8px"><div class="avatar">${esc(initials(other?.full_name))}</div><h2 style="margin:0">${esc(other?.full_name || "Coach")}</h2></div>
+    <div class="row" style="margin-bottom:8px">${avatar(other)}<h2 style="margin:0">${esc(other?.full_name || "Coach")}</h2></div>
     <div class="chat"><div class="chat-log" id="log"></div>
     <form class="chat-input" id="send"><textarea name="m" placeholder="Message…" required></textarea><button>Send</button></form></div>`);
   const log = $("#log");
@@ -1051,6 +1142,14 @@ async function chatView(clientId) {
 async function profileView() {
   const owned = me.equipment || [];
   render(`<h1>${me.role === "trainer" ? "Settings" : "My profile"}</h1>
+    <div class="card"><div class="row" style="gap:16px">${avatar(me, "xl")}
+      <div><b>${me.role === "trainer" ? "Your photo" : "Profile photo"}</b><p class="muted" style="margin:2px 0 8px">${me.role === "trainer" ? "Your clients see this next to your messages." : "Only you and your coach can see it."}</p>
+      <label class="btn small secondary" style="margin:0;color:var(--text)">${me.avatar_path ? "Change photo" : "Add a photo"}<input type="file" id="avFile" accept="image/*" hidden></label>
+      ${me.avatar_path ? `<button type="button" class="small secondary" id="avDel" style="margin-left:6px">Remove</button>` : ""}</div></div></div>
+    ${me.role === "client" ? `<div class="card"><h3>Progress photos</h3>
+      <label class="check"><input type="checkbox" id="phOpt" ${me.photos_opt_in ? "checked" : ""}>
+      <span>Turn on weekly progress photos. I consent to my coach seeing the photos I upload, to track my progress. Only my coach and I can see them, and I can delete them or switch this off at any time.</span></label>
+      ${me.photos_opt_in ? `<a class="btn secondary block" href="#/photos" style="margin-top:10px">Open my progress photos</a>` : ""}</div>` : ""}
     <form class="card" id="pf">
       <label>Full name</label><input name="name" value="${esc(me.full_name)}">
       ${me.role === "client" ? `<label>What do I want to track?</label>
@@ -1081,6 +1180,29 @@ async function profileView() {
     const { error } = await sb.from("profiles").update(upd).eq("id", me.id);
     if (!fail(error)) { Object.assign(me, upd); toast("Saved"); route(); }
   };
+  $("#avFile").addEventListener("change", async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    try {
+      toast("Uploading photo…");
+      const blob = await shrinkImage(file, 480, 0.85);
+      const path = `${me.id}/avatar-${Date.now()}.jpg`;
+      const { error } = await sb.storage.from("avatars").upload(path, blob, { contentType: "image/jpeg" }); if (fail(error)) return;
+      if (me.avatar_path) await sb.storage.from("avatars").remove([me.avatar_path]);
+      const { error: ue } = await sb.from("profiles").update({ avatar_path: path }).eq("id", me.id); if (fail(ue)) return;
+      me.avatar_path = path; toast("Photo saved"); route();
+    } catch (err) { toast(err.message); }
+  });
+  $("#avDel")?.addEventListener("click", async () => {
+    await sb.storage.from("avatars").remove([me.avatar_path]);
+    const { error } = await sb.from("profiles").update({ avatar_path: null }).eq("id", me.id);
+    if (!fail(error)) { me.avatar_path = null; $("#meBtn").innerHTML = I('<circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/>'); toast("Photo removed"); profileView(); }
+  });
+  $("#phOpt")?.addEventListener("change", async (e) => {
+    const on = e.target.checked;
+    const upd = { photos_opt_in: on, photos_consent_at: on ? new Date().toISOString() : me.photos_consent_at };
+    const { error } = await sb.from("profiles").update(upd).eq("id", me.id);
+    if (!fail(error)) { Object.assign(me, upd); toast(on ? "Progress photos switched on" : "Progress photos switched off. Your coach can no longer see them."); profileView(); }
+  });
   $("#libFree")?.addEventListener("change", async (e) => {
     const { error } = await sb.from("profiles").update({ library_free: e.target.checked }).eq("id", me.id);
     if (!fail(error)) { me.library_free = e.target.checked; toast(e.target.checked ? "Library is free" : "Library is now a paid extra"); }
@@ -1107,10 +1229,10 @@ async function trainerClients() {
   const { data: recent } = await sb.from("set_logs").select("client_id, logged_at").order("logged_at", { ascending: false }).limit(500);
   const lastSeen = {}; (recent || []).forEach((r) => (lastSeen[r.client_id] ??= r.logged_at));
   render(`<h1>Clients</h1>
-    ${pending.length ? `<div class="card"><h3>New sign-ups (${pending.length})</h3>${pending.map((p) => `<div class="list-item"><div class="avatar">${esc(initials(p.full_name))}</div>
+    ${pending.length ? `<div class="card"><h3>New sign-ups (${pending.length})</h3>${pending.map((p) => `<div class="list-item">${avatar(p)}
       <div class="grow"><b>${esc(p.full_name)}</b><div class="muted">${esc(p.email)}, joined ${fmtDate(p.created_at)}${p.popia_consent_at ? "" : ", no consent recorded"}</div></div>
       <button class="small" data-accept="${p.id}">Accept</button></div>`).join("")}</div>` : ""}
-    <div class="card">${mine.map((p) => `<a class="list-item" href="#/client/${p.id}"><div class="avatar">${esc(initials(p.full_name))}</div>
+    <div class="card">${mine.map((p) => `<a class="list-item" href="#/client/${p.id}">${avatar(p)}
       <div class="grow"><b>${esc(p.full_name)}</b> ${p.plan !== "free" ? `<span class="chip ${p.access_until && p.access_until < today() ? "warn" : "good"}">${p.plan === "pt" ? "PT" : "Library"}</span>` : ""}<div class="muted">${esc(p.goal || "No goal set")}</div></div>
       <span class="muted">${lastSeen[p.id] ? "Trained " + fmtDate(lastSeen[p.id]) : "No sets yet"}</span></a>`).join("")
       || `<div class="empty">No clients yet. Share the app link — new sign-ups appear here for you to accept.</div>`}</div>`);
@@ -1139,7 +1261,7 @@ async function trainerClient(id) {
   if (!c) return render(`<div class="empty">Client not found.</div>`);
   const prog = await progressView(id, true);
   render(`<button class="back" onclick="location.hash='#/clients'">← Clients</button>
-    <div class="card"><div class="row"><div class="avatar">${esc(initials(c.full_name))}</div><div class="grow"><h2 style="margin:0">${esc(c.full_name)}</h2>
+    <div class="card"><div class="row">${avatar(c, "lg")}<div class="grow"><h2 style="margin:0">${esc(c.full_name)}</h2>
       <div class="muted">${esc(c.goal || "No goal set")}</div></div><button class="small" onclick="location.hash='#/chat/${c.id}'">${ICON.chat} Chat</button></div>
       <div style="margin-top:10px">${(c.equipment || []).map((e) => `<span class="chip">${esc(e)}</span>`).join("") || `<span class="muted">Bodyweight only / not set</span>`}</div>
       ${c.weights_note ? `<p style="margin:10px 0 0"><span class="muted">Weights:</span> ${esc(c.weights_note)}</p>` : ""}</div>
@@ -1150,6 +1272,7 @@ async function trainerClient(id) {
       <p class="muted" style="margin:4px 0 0">A pass sets the plan and adds its days from today, or from the end of their current pass.</p>
       <button class="small" style="margin-top:10px">Update access</button>
       ${c.access_until && c.access_until < today() ? `<span class="chip warn">Expired ${fmtDate(c.access_until)}</span>` : ""}</form>
+    ${c.photos_opt_in ? `<a class="card row between" href="#/photos/${c.id}" style="text-decoration:none;color:inherit"><div><h3 style="margin:0">Progress photos</h3><p class="muted" style="margin:2px 0 0">Before and after, week by week</p></div>${ICON.progress}</a>` : ""}
     ${checkinHistory((cks || []).filter((r) => r.energy != null))}
     <div class="card"><div class="row between"><h3>Workouts</h3><button class="small" onclick="location.hash='#/builder/${c.id}'">+ New workout</button></div>
       ${(wos || []).map((w) => `<a class="list-item" href="#/builder/${c.id}/${w.id}"><div class="grow"><b>${esc(w.name)}</b>
@@ -1428,13 +1551,13 @@ async function exerciseEditor(id) {
 
 async function trainerInbox() {
   const [{ data: clients }, { data: msgs }] = await Promise.all([
-    sb.from("profiles").select("id, full_name").eq("trainer_id", me.id).order("full_name"),
+    sb.from("profiles").select("id, full_name, avatar_path").eq("trainer_id", me.id).order("full_name"),
     sb.from("messages").select("*").order("created_at", { ascending: false }).limit(500),
   ]);
   const last = {}; const unread = {};
   (msgs || []).forEach((m) => { last[m.client_id] ??= m; if (!m.read_at && m.sender_id !== me.id) unread[m.client_id] = (unread[m.client_id] || 0) + 1; });
   const sorted = (clients || []).sort((a, b) => (last[b.id]?.created_at || "").localeCompare(last[a.id]?.created_at || ""));
-  render(`<h1>Chat</h1><div class="card">${sorted.map((c) => `<a class="list-item" href="#/chat/${c.id}"><div class="avatar">${esc(initials(c.full_name))}</div>
+  render(`<h1>Chat</h1><div class="card">${sorted.map((c) => `<a class="list-item" href="#/chat/${c.id}">${avatar(c)}
     <div class="grow"><b>${esc(c.full_name)}</b><div class="muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(last[c.id]?.body || "No messages yet")}</div></div>
     ${unread[c.id] ? `<span class="chip on">${unread[c.id]}</span>` : `<span class="muted">${last[c.id] ? fmtDate(last[c.id].created_at) : ""}</span>`}</a>`).join("")
     || `<div class="empty">Accept a client to start chatting.</div>`}</div>`);
