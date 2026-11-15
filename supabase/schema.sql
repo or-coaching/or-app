@@ -457,3 +457,8 @@ create policy "clients read their trainer's library" on public.exercises for sel
                where wi.exercise_id = exercises.id and w.client_id = auth.uid())
   )
 );
+
+-- =====================================================================
+-- EXERCISE TYPES (warm-up, cool-down, chill set, or the coach's own)
+-- =====================================================================
+alter table public.exercises add column if not exists categories text[] not null default '{}';
