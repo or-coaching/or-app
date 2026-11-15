@@ -17,7 +17,7 @@ function seed() {
   const db = {
     profiles: [
       { id: TRAINER, full_name: "Your coach", email: "coach@demo", role: "trainer", trainer_id: null, equipment: [], tracks: [], library_free: false, plan: "free", created_at: at(-90) },
-      { id: CLIENT, full_name: "Thandi Mokoena", email: "thandi@demo", role: "client", trainer_id: TRAINER, goal: "Lose 6 kg and deadlift my body weight",
+      { id: CLIENT, full_name: "Thandi Mokoena", email: "thandi@demo", role: "client", trainer_id: TRAINER, goal: "Lose 6 kg and deadlift my body weight", weights_note: "Dumbbells 5 kg and 8 kg, 12 kg kettlebell at home; gym on Saturdays",
         equipment: ["Dumbbells", "Resistance bands", "Yoga mat"], tracks: ["exercise", "nutrition"], daily_points: 32, goal_weight_kg: 78,
         plan: "library", access_until: day(11), popia_consent_at: at(-40), created_at: at(-40) },
       { id: CLIENT2, full_name: "Jess van Wyk", email: "jess@demo", role: "client", trainer_id: TRAINER, goal: "Run 10 km", equipment: ["Full gym"],
@@ -74,7 +74,7 @@ function seed() {
   const today = { id: uid(), trainer_id: TRAINER, client_id: CLIENT, name: "Lower body B", scheduled_date: day(0), notes: "Five minutes on the bike first. Go a little heavier on the deadlifts if last week felt easy.", completed_at: null, created_at: at(-1) };
   db.workouts.push(today);
   [[squat, 4, 10, 14, 60], [rdl, 3, 10, 14, 75], [lunge, 3, 12, null, 45], [bridge, 3, 15, null, 45], [plank, 3, null, null, 30]].forEach(([e, s, r, kg, rest], i) =>
-    db.workout_items.push({ id: uid(), workout_id: today.id, exercise_id: e.id, position: i, target_sets: s, target_reps: r, target_weight_kg: kg, target_seconds: r ? null : 40, rest_seconds: rest, notes: i === 1 ? "Slow on the way down" : null }));
+    db.workout_items.push({ id: uid(), workout_id: today.id, exercise_id: e.id, position: i, section: i === 3 ? "Warm-up" : i === 4 ? "Cool-down" : "Main set", target_sets: s, target_reps: r, target_weight_kg: kg, target_seconds: r ? null : 40, rest_seconds: rest, notes: i === 1 ? "Slow on the way down" : null }));
   db.workouts.push({ id: uid(), trainer_id: TRAINER, client_id: CLIENT, name: "Upper body B", scheduled_date: day(2), notes: null, completed_at: null, created_at: at(-1) });
 
   // Activities, including two roulette spins (one more earns a badge)

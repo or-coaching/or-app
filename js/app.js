@@ -1,6 +1,8 @@
 import { CONFIG, BRAND } from "./config.js";
 import { FOODS, WEEKLY_BUFFER, RECIPES, calcPoints, dailyBudget } from "./nutrition.js";
 import { CHALLENGES, TIPS, BADGES, badgeStats, medal, pickForDate, ROULETTE_UNLOCK_DAYS } from "./engage.js";
+import { MOVES, moveFor, moveSvg, startMoves } from "./moves.js";
+import { STARTER } from "./starter.js";
 
 // ---------------------------------------------------------------- setup
 const SUPABASE_ESM = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
@@ -63,6 +65,7 @@ function toast(msg) {
 function render(html) {
   charts.forEach((c) => c.destroy()); charts = [];
   $("#view").innerHTML = html; window.scrollTo(0, 0);
+  startMoves($("#view"));
 }
 function go(path) { location.hash = "#/" + path; }
 function initials(name) { return (name || "?").split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase(); }
@@ -500,6 +503,9 @@ async function clientHome() {
       <div class="challenge"><span class="q">${esc(challenge)}</span>
       ${chDone ? `<button class="small done" disabled>Done</button>` : `<button class="small" id="chDone">Done it</button>`}</div></div>
     ${food ? foodCard(food) : ""}
+    ${ws.some((m) => m.metric_date >= weekStart()) ? "" : `<div class="card weekly"><div class="row between" style="gap:12px"><div><h3>Weekly progress</h3>
+      <p class="muted" style="margin:0">${ws.length ? `Last weigh-in ${fmtDate(ws[ws.length - 1].metric_date)}.` : "No weigh-ins yet."} Log this week's so you and your coach can see the trend.</p></div>
+      <button class="small" onclick="location.hash='#/log/weigh'">${ICON.scale} Log</button></div></div>`}
     <div class="sec"><h2>Your month</h2><a href="#/progress">See progress</a></div>
     <div class="card">
       <div style="margin-bottom:8px"><b class="stat" style="font-size:1.5rem">${activeThisMonth}</b> <span class="muted">of ${goal} active days this month</span></div>
@@ -578,11 +584,12 @@ async function rouletteView() {
       const url = await videoUrl(pick.video_path);
       const presc = pick.muscle_group === "Cardio" ? "3 rounds of 40 seconds on, 20 off" : pick.muscle_group === "Mobility" ? "2 rounds of 60 seconds" : pick.equipment?.length ? "3 sets of 10–12 at a weight you could lift 2 more times" : "3 sets of 12–15";
       $("#result").innerHTML = `<div class="card ex-card"><h2>${esc(pick.name)}</h2><span class="chip">${esc(pick.muscle_group)}</span>
-        ${url ? `<video src="${esc(url)}" controls playsinline muted loop preload="metadata"></video>` : ""}
+        ${demoHtml(pick, url)}
         <div class="target">Try: <b>${esc(presc)}</b></div>
         ${pick.cues?.length ? `<div class="cues"><b>Form cues</b><ul>${pick.cues.map((c) => `<li>${esc(c)}</li>`).join("")}</ul></div>` : ""}
         ${swapHtml(swapSuggestions(pick, pool, me.equipment))}
         <button class="block" id="didIt" style="margin-top:14px">I did it</button></div>`;
+      startMoves($("#result"));
       $("#didIt").onclick = async () => {
         const { error } = await sb.from("activities").insert({ client_id: me.id, type: "Roulette", minutes: 5, activity_date: today(), notes: pick.name });
         if (fail(error)) return;
@@ -690,7 +697,7 @@ async function workoutView(id) {
     }).join("");
     return `<div class="card ex-card">
       <div class="row between"><h2>${esc(ex.name)}</h2><span>${typesOf(ex).slice(0, 1).map((t) => `<span class="chip on">${esc(t)}</span>`).join("")}<span class="chip">${esc(ex.muscle_group)}</span></span></div>
-      ${url ? `<video src="${esc(url)}" controls playsinline preload="metadata" loop muted></video>` : ""}
+      ${demoHtml(ex, url)}
       <div class="target">Coach's target: <b>${esc(targetText(it))}</b>${it.notes ? `<div class="muted">${esc(it.notes)}</div>` : ""}
         ${last ? `<div class="muted">Last time: ${last.reps ?? last.seconds + "s"}${last.weight_kg ? " @ " + last.weight_kg + " kg" : ""}</div>` : ""}</div>
       ${ex.cues?.length ? `<div class="cues"><b>Form cues</b><ul>${ex.cues.map((c) => `<li>${esc(c)}</li>`).join("")}</ul></div>` : ""}
@@ -702,9 +709,11 @@ async function workoutView(id) {
     </div>`;
   }));
 
-  render(`<button class="back" onclick="history.back()">← Back</button>
+  render(`<button class="back" onclick="history.back()">Back</button>
     <h1>${esc(w.name)}</h1>${w.notes ? `<p class="muted">${esc(w.notes)}</p>` : ""}
-    ${cards.join("") || `<div class="empty">No exercises yet.</div>`}
+    ${SECTIONS.map((sec) => { const idx = items.map((it, i) => [it, i]).filter(([it]) => sectionOf(it) === sec.key);
+      return idx.length ? `<div class="sec"><h2>${sec.key}</h2><span class="muted">${idx.length} ${idx.length === 1 ? "exercise" : "exercises"}</span></div>${idx.map(([, i]) => cards[i]).join("")}` : ""; }).join("")
+      || `<div class="empty">No exercises yet.</div>`}
     ${w.completed_at ? `<div class="card" style="text-align:center"><span class="chip good">Completed ${fmtDate(w.completed_at)}</span></div>`
       : `<button class="block" id="finish">Finish workout</button>`}`);
 
@@ -746,9 +755,14 @@ async function signedMap(rows) {
   const { data } = await sb.storage.from("exercise-videos").createSignedUrls(paths, 60 * 60 * 6);
   return Object.fromEntries((data || []).filter((d) => d.signedUrl).map((d) => [d.path, d.signedUrl]));
 }
+function demoHtml(ex, url, opts = {}) {
+  if (url) return `<video src="${esc(url)}" controls playsinline preload="metadata" loop muted></video>`;
+  const mv = moveFor(ex);
+  return mv ? moveSvg(mv, { props: (ex.equipment || []).length > 0, ...opts }) : "";
+}
 function tileHtml(x, urls, href) {
   const u = urls[x.video_path];
-  return `<a class="tile" href="${href}">${u ? `<video src="${esc(u)}#t=0.8" muted playsinline preload="metadata"></video>` : `<span class="ph" aria-hidden="true">${forms(seedOf(x.name), { w: 200, h: 250, scale: 0.55 })}</span>`}
+  return `<a class="tile" href="${href}">${u ? `<video src="${esc(u)}#t=0.8" muted playsinline preload="metadata"></video>` : `<span class="ph" aria-hidden="true">${moveFor(x) ? moveSvg(moveFor(x), { animate: false, label: false, props: (x.equipment || []).length > 0 }) : forms(seedOf(x.name), { w: 200, h: 250, scale: 0.55 })}</span>`}
     <b>${esc(x.name)}</b><span>${esc(x.muscle_group)}${missingEquipment(x, me.equipment).length ? ", needs kit" : ""}</span></a>`;
 }
 async function clientLibrary() {
@@ -800,7 +814,7 @@ async function clientExercise(id) {
   const url = await videoUrl(ex.video_path);
   render(`<button class="back" onclick="history.back()">← Library</button>
     <div class="card ex-card"><div class="row between"><h1>${esc(ex.name)}</h1><span class="chip">${esc(ex.muscle_group)}</span></div>
-      ${url ? `<video src="${esc(url)}" controls playsinline preload="metadata" loop muted></video>` : `<div class="empty">No demo video yet.</div>`}
+      ${demoHtml(ex, url) || `<div class="empty">No demo yet.</div>`}
       <p class="muted">Equipment: ${(ex.equipment || []).map(esc).join(", ") || "Bodyweight"}</p>
       ${ex.cues?.length ? `<div class="cues"><b>Form cues</b><ul>${ex.cues.map((c) => `<li>${esc(c)}</li>`).join("")}</ul></div>` : ""}
       ${swapHtml(swapSuggestions(ex, lib || [], me.equipment))}
@@ -951,7 +965,6 @@ async function progressView(clientId, embedded = false) {
       ${(acts || []).map((a) => `<div class="list-item"><div class="grow"><b>${esc(a.type)}</b> <span class="muted">${a.minutes || 0} min${a.distance_km ? ", " + a.distance_km + " km" : ""}</span>
         ${a.notes ? `<div class="muted">${esc(a.notes)}</div>` : ""}</div><span class="muted">${fmtDate(a.activity_date)}</span></div>`).join("") || `<div class="empty">No activities logged.</div>`}</div>`;
 
-  if (embedded) return { html, after: () => drawProgress(metrics, pbs) };
   const d7 = new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10), d14 = new Date(Date.now() - 14 * 864e5).toISOString().slice(0, 10);
   const { data: recent } = await sb.from("activities").select("activity_date, minutes").eq("client_id", clientId).gte("activity_date", d14);
   const wk = (from, to) => {
@@ -965,6 +978,7 @@ async function progressView(clientId, embedded = false) {
     <div><div class="stat">${tw.days}</div><div class="stat-label">Active days</div>${cmp(tw.days, lw.days)}</div>
     <div><div class="stat">${tw.sets}</div><div class="stat-label">Sets</div>${cmp(tw.sets, lw.sets)}</div>
     <div><div class="stat">${tw.mins}</div><div class="stat-label">Activity min</div>${cmp(tw.mins, lw.mins)}</div></div></div>`;
+  if (embedded) return { html: reportHtml.replace("<h3>Your week</h3>", "<h3>This week vs last week</h3>") + html, after: () => drawProgress(metrics, pbs) };
   let nutHtml = "";
   if (tracksNut() && me.daily_points) {
     const from = new Date(Date.now() - 27 * 864e5).toISOString().slice(0, 10);
@@ -1043,7 +1057,9 @@ async function profileView() {
       <div id="tr">${[["exercise", "Exercise"], ["nutrition", "Nutrition"]].map(([k, l]) => `<span class="chip ${(me.tracks || ["exercise"]).includes(k) ? "on" : ""}" data-t="${k}" role="button">${l}</span>`).join("")}</div>
       <label>My goal</label><input name="goal" value="${esc(me.goal)}" placeholder="e.g. Lose 5 kg, run 5 km, get stronger">
       <label>Equipment I have</label><p class="muted">Your coach uses this to fit workouts to your space.</p>
-      <div id="eq">${EQUIPMENT.map((e) => `<span class="chip ${owned.includes(e) ? "on" : ""}" data-e="${esc(e)}" role="button">${esc(e)}</span>`).join("")}</div>` : ""}
+      <div id="eq">${EQUIPMENT.map((e) => `<span class="chip ${owned.includes(e) ? "on" : ""}" data-e="${esc(e)}" role="button">${esc(e)}</span>`).join("")}</div>
+      <label for="wts">Weights I have or use</label>
+      <textarea id="wts" name="wts" maxlength="300" style="min-height:64px" placeholder="e.g. Dumbbells 5 kg and 8 kg, 12 kg kettlebell, gym up to 20 kg">${esc(me.weights_note || "")}</textarea>` : ""}
       <button class="block" style="margin-top:14px">Save</button></form>
     ${me.role === "client" && me.trainer_id ? `<div class="card"><h3>My plan</h3><p><span class="chip on">${{ free: "Workouts only", library: "Library", pt: "PT client" }[me.plan] || me.plan}</span>
       ${me.access_until ? `<span class="muted">until ${fmtDate(me.access_until)}</span>` : ""}</p>${igLink()}</div>` : ""}
@@ -1058,7 +1074,7 @@ async function profileView() {
     e.preventDefault(); const f = e.target;
     const upd = { full_name: f.name.value };
     if (me.role === "client") {
-      upd.goal = f.goal.value; upd.equipment = $$("#eq .chip.on").map((c) => c.dataset.e);
+      upd.goal = f.goal.value; upd.equipment = $$("#eq .chip.on").map((c) => c.dataset.e); upd.weights_note = f.wts.value.trim() || null;
       upd.tracks = $$("#tr .chip.on").map((c) => c.dataset.t);
       if (!upd.tracks.length) return toast("Pick exercise, nutrition or both");
     }
@@ -1125,7 +1141,8 @@ async function trainerClient(id) {
   render(`<button class="back" onclick="location.hash='#/clients'">← Clients</button>
     <div class="card"><div class="row"><div class="avatar">${esc(initials(c.full_name))}</div><div class="grow"><h2 style="margin:0">${esc(c.full_name)}</h2>
       <div class="muted">${esc(c.goal || "No goal set")}</div></div><button class="small" onclick="location.hash='#/chat/${c.id}'">${ICON.chat} Chat</button></div>
-      <div style="margin-top:10px">${(c.equipment || []).map((e) => `<span class="chip">${esc(e)}</span>`).join("") || `<span class="muted">Bodyweight only / not set</span>`}</div></div>
+      <div style="margin-top:10px">${(c.equipment || []).map((e) => `<span class="chip">${esc(e)}</span>`).join("") || `<span class="muted">Bodyweight only / not set</span>`}</div>
+      ${c.weights_note ? `<p style="margin:10px 0 0"><span class="muted">Weights:</span> ${esc(c.weights_note)}</p>` : ""}</div>
     <form class="card" id="acc"><h3>Access & payment</h3><div class="grid2">
       <div><label>Plan</label><select name="plan">${[["free", "Workouts only"], ["library", "Library subscriber"], ["pt", "PT client"]].map(([k, l]) => `<option value="${k}" ${c.plan === k ? "selected" : ""}>${l}</option>`).join("")}</select></div>
       <div><label>Paid until</label><input name="until" type="date" value="${c.access_until || ""}"></div></div>
@@ -1154,6 +1171,13 @@ async function trainerClient(id) {
   };
 }
 
+const SECTIONS = [
+  { key: "Warm-up", hint: "Get moving and switch on the right muscles.", match: ["Warm-up", "Mobility"], defaults: { target_sets: 1, target_reps: 10, rest_seconds: 15 } },
+  { key: "Main set", hint: "The work for today.", match: ["Main set", "Finisher"], defaults: { target_sets: 3, target_reps: 10, rest_seconds: 60 } },
+  { key: "Cool-down", hint: "Bring the heart rate down and stretch.", match: ["Cool-down", "Stretch", "Chill set", "Mobility"], defaults: { target_sets: 1, target_seconds: 30 } },
+];
+const sectionOf = (it) => (SECTIONS.some((s) => s.key === it.section) ? it.section : "Main set");
+
 async function workoutBuilder(clientId, workoutId) {
   const [{ data: c }, { data: library }, wRes] = await Promise.all([
     sb.from("profiles").select("*").eq("id", clientId).single(),
@@ -1161,44 +1185,87 @@ async function workoutBuilder(clientId, workoutId) {
     workoutId ? sb.from("workouts").select("*, workout_items(*)").eq("id", workoutId).single() : Promise.resolve({ data: null }),
   ]);
   const w = wRes.data;
-  let items = (w?.workout_items || []).sort((a, b) => a.position - b.position).map((i) => ({ ...i }));
+  let items = (w?.workout_items || []).sort((a, b) => a.position - b.position).map((i) => ({ ...i, section: sectionOf(i) }));
   const lib = library || [];
-  if (!lib.length) return render(`<button class="back" onclick="history.back()">← Back</button><div class="card"><h2>Add exercises first</h2>
-    <p>Your library is empty. Add exercises (with videos) to the library, then build workouts from them.</p><button onclick="location.hash='#/exercise/new'">Add an exercise</button></div>`);
+  if (!lib.length) return render(`<button class="back" onclick="history.back()">Back</button><div class="card"><h2>Add exercises first</h2>
+    <p>Your library is empty. Add the starter pack (exercises with animated demos) or your own, then build workouts from them.</p>
+    <button onclick="location.hash='#/library'">Go to library</button></div>`);
 
+  const exOf = (it) => lib.find((x) => x.id === it.exercise_id) || {};
+  const itemHtml = (it, i, n) => {
+    const ex = exOf(it); const mv = moveFor(ex);
+    return `<div class="card build-item" data-i="${i}"><div class="row between"><div class="row" style="gap:12px;min-width:0">
+        <span class="thumb">${mv ? moveSvg(mv, { animate: false, label: false, props: (ex.equipment || []).length > 0 }) : ""}</span>
+        <div style="min-width:0"><b>${n}. ${esc(ex.name)}</b><div class="muted">${esc(ex.muscle_group || "")}</div></div></div>
+        <span class="row" style="gap:6px;flex:none"><button type="button" class="small secondary" data-up="${i}" aria-label="Move up">${ICON.up}</button><button type="button" class="small secondary" data-rm="${i}" aria-label="Remove">${ICON.close}</button></span></div>
+      ${swapHtml(swapSuggestions(ex, lib, c.equipment))}
+      <div class="grid3"><div><label>Sets</label><input data-k="target_sets" type="number" inputmode="numeric" value="${it.target_sets ?? ""}"></div>
+        <div><label>Reps</label><input data-k="target_reps" type="number" inputmode="numeric" value="${it.target_reps ?? ""}"></div>
+        <div><label>kg</label><input data-k="target_weight_kg" type="number" inputmode="decimal" step="0.5" value="${it.target_weight_kg ?? ""}"></div>
+        <div><label>Seconds</label><input data-k="target_seconds" type="number" inputmode="numeric" value="${it.target_seconds ?? ""}"></div>
+        <div><label>Rest (s)</label><input data-k="rest_seconds" type="number" inputmode="numeric" value="${it.rest_seconds ?? ""}"></div></div>
+      <label>Note for client</label><input data-k="notes" value="${esc(it.notes)}"></div>`;
+  };
   const draw = () => {
-    $("#items").innerHTML = items.map((it, i) => {
-      const ex = lib.find((x) => x.id === it.exercise_id) || {};
-      return `<div class="card" data-i="${i}"><div class="row between"><b>${i + 1}. ${esc(ex.name)}</b>
-        <span><button type="button" class="small secondary" data-up="${i}" aria-label="Move up">${ICON.up}</button> <button type="button" class="small secondary" data-rm="${i}" aria-label="Remove">${ICON.close}</button></span></div>
-        ${swapHtml(swapSuggestions(ex, lib, c.equipment))}
-        <div class="grid3"><div><label>Sets</label><input data-k="target_sets" type="number" value="${it.target_sets ?? ""}"></div>
-        <div><label>Reps</label><input data-k="target_reps" type="number" value="${it.target_reps ?? ""}"></div>
-        <div><label>kg</label><input data-k="target_weight_kg" type="number" step="0.5" value="${it.target_weight_kg ?? ""}"></div>
-        <div><label>Seconds</label><input data-k="target_seconds" type="number" value="${it.target_seconds ?? ""}"></div>
-        <div><label>Rest (s)</label><input data-k="rest_seconds" type="number" value="${it.rest_seconds ?? ""}"></div></div>
-        <label>Note for client</label><input data-k="notes" value="${esc(it.notes)}"></div>`;
-    }).join("") || `<div class="empty">Add exercises from the library below.</div>`;
-    $$("#items [data-k]").forEach((inp) => (inp.oninput = () => {
+    $("#sections").innerHTML = SECTIONS.map((sec) => {
+      const list = items.map((it, i) => [it, i]).filter(([it]) => it.section === sec.key);
+      return `<section class="build-sec"><div class="sec"><h2>${sec.key}</h2><span class="muted">${list.length} ${list.length === 1 ? "exercise" : "exercises"}</span></div>
+        <p class="muted" style="margin-top:-4px">${sec.hint}</p>
+        ${list.map(([it, i], n) => itemHtml(it, i, n + 1)).join("")}
+        <button type="button" class="secondary block" data-add="${sec.key}">${ICON.plus} Add to ${sec.key.toLowerCase()}</button></section>`;
+    }).join("");
+    startMoves($("#sections"));
+    $$("#sections [data-k]").forEach((inp) => (inp.oninput = () => {
       const i = inp.closest("[data-i]").dataset.i; const k = inp.dataset.k;
       items[i][k] = k === "notes" ? inp.value : num(inp.value);
     }));
-    $$("[data-rm]").forEach((b) => (b.onclick = () => { items.splice(b.dataset.rm, 1); draw(); }));
-    $$("[data-up]").forEach((b) => (b.onclick = () => { const i = +b.dataset.up; if (i > 0) { [items[i - 1], items[i]] = [items[i], items[i - 1]]; draw(); } }));
+    $$("[data-rm]").forEach((b) => (b.onclick = () => { items.splice(+b.dataset.rm, 1); draw(); }));
+    $$("[data-up]").forEach((b) => (b.onclick = () => {
+      const i = +b.dataset.up; const sec = items[i].section;
+      const prev = items.map((it, j) => [it, j]).filter(([it, j]) => j < i && it.section === sec).pop();
+      if (prev) { const j = prev[1]; [items[j], items[i]] = [items[i], items[j]]; draw(); }
+    }));
+    $$("[data-add]").forEach((b) => (b.onclick = () => openPicker(b.dataset.add)));
   };
 
-  render(`<button class="back" onclick="location.hash='#/client/${clientId}'">← ${esc(c.full_name)}</button>
+  const openPicker = (secKey) => {
+    const sec = SECTIONS.find((s) => s.key === secKey);
+    const suggested = lib.filter((x) => typesOf(x).some((t) => sec.match.includes(t)));
+    const others = lib.filter((x) => !suggested.includes(x));
+    const card = (x) => { const mv = moveFor(x); const need = missingEquipment(x, c.equipment).length;
+      return `<button type="button" class="pick" data-pick="${x.id}">${mv ? moveSvg(mv, { animate: false, label: false, props: (x.equipment || []).length > 0 }) : `<span class="pick-ph">${forms(seedOf(x.name), { w: 200, h: 162, scale: 0.5 })}</span>`}
+        <b>${esc(x.name)}</b><span>${esc(x.muscle_group)}${need ? ", needs kit" : ""}</span></button>`; };
+    document.body.insertAdjacentHTML("beforeend", `<div class="picker" id="picker" role="dialog" aria-label="Add to ${esc(secKey)}"><div class="picker-box">
+      <div class="row between"><h2 style="margin:0">Add to ${esc(secKey.toLowerCase())}</h2><button type="button" class="small secondary" id="pkClose" aria-label="Close">${ICON.close}</button></div>
+      <input id="pkQ" placeholder="Search the library" aria-label="Search the library" style="margin:12px 0">
+      <div id="pkList"></div></div></div>`);
+    const list = $("#pkList");
+    const drawList = () => {
+      const q = $("#pkQ").value.toLowerCase(); const f = (arr) => arr.filter((x) => x.name.toLowerCase().includes(q));
+      const a = f(suggested), b = f(others);
+      list.innerHTML = `${a.length ? `<p class="muted">Suggested for ${esc(secKey.toLowerCase())}</p><div class="pick-grid">${a.map(card).join("")}</div>` : ""}
+        ${b.length ? `<p class="muted" style="margin-top:14px">${a.length ? "Everything else" : "Library"}</p><div class="pick-grid">${b.map(card).join("")}</div>` : ""}
+        ${!a.length && !b.length ? `<div class="empty">No exercises match.</div>` : ""}`;
+      startMoves(list);
+      $$("[data-pick]", list).forEach((btn) => (btn.onclick = () => {
+        items.push({ exercise_id: btn.dataset.pick, section: secKey, ...sec.defaults });
+        $("#picker").remove(); draw(); toast(`Added to ${secKey.toLowerCase()}`);
+      }));
+    };
+    $("#pkQ").oninput = drawList; $("#pkClose").onclick = () => $("#picker").remove();
+    $("#picker").addEventListener("click", (e) => { if (e.target.id === "picker") $("#picker").remove(); });
+    drawList(); $("#pkQ").focus();
+  };
+
+  render(`<button class="back" onclick="location.hash='#/client/${clientId}'">Back to ${esc(c.full_name)}</button>
     <h1>${w ? "Edit workout" : "New workout"}</h1>
     <form id="wf"><div class="card"><label>Workout name</label><input name="name" required value="${esc(w?.name || "")}" placeholder="e.g. Lower body A">
       <div class="grid2"><div><label>Date</label><input name="date" type="date" value="${w?.scheduled_date || today()}"></div><div></div></div>
-      <label>Notes</label><textarea name="notes" placeholder="Warm-up, focus for today…">${esc(w?.notes || "")}</textarea>
-      <p class="muted" style="margin-top:8px">Client equipment: ${(c.equipment || []).map(esc).join(", ") || "not set"}</p></div>
-    <div id="items"></div>
-    <div class="card"><label>Add exercise from library</label><div class="row"><select id="pick">${lib.map((x) => `<option value="${x.id}">${esc(x.name)} — ${esc(x.muscle_group)}${missingEquipment(x, c.equipment).length ? " (needs kit)" : ""}</option>`).join("")}</select>
-      <button type="button" id="addEx">Add</button></div><p class="muted">Marked "needs kit": the client doesn't own that equipment, so swap suggestions are shown.</p></div>
-    <div class="grid2"><button class="block">Save workout</button>${w ? `<button type="button" class="danger" id="del">Delete</button>` : ""}</div></form>`);
+      <label>Notes</label><textarea name="notes" placeholder="Focus for today, how it should feel">${esc(w?.notes || "")}</textarea>
+      <p class="muted" style="margin-top:8px">Equipment: ${(c.equipment || []).map(esc).join(", ") || "not set"}${c.weights_note ? `. Weights: ${esc(c.weights_note)}` : ""}</p></div>
+    <div id="sections"></div>
+    <div class="grid2" style="margin-top:16px"><button class="block">Save workout</button>${w ? `<button type="button" class="danger" id="del">Delete</button>` : ""}</div></form>`);
   draw();
-  $("#addEx").onclick = () => { items.push({ exercise_id: $("#pick").value, target_sets: 3, target_reps: 10 }); draw(); };
   $("#del")?.addEventListener("click", async () => {
     if (!confirm("Delete this workout and its logged sets?")) return;
     const { error } = await sb.from("workouts").delete().eq("id", w.id); if (!fail(error)) go("client/" + clientId);
@@ -1206,16 +1273,17 @@ async function workoutBuilder(clientId, workoutId) {
   $("#wf").onsubmit = async (e) => {
     e.preventDefault(); const f = e.target;
     if (!items.length) return toast("Add at least one exercise");
+    const ordered = SECTIONS.flatMap((sec) => items.filter((it) => it.section === sec.key));
     const row = { trainer_id: me.id, client_id: clientId, name: f.name.value, scheduled_date: f.date.value || null, notes: f.notes.value || null };
     const { data: saved, error } = w ? await sb.from("workouts").update(row).eq("id", w.id).select().single()
       : await sb.from("workouts").insert(row).select().single();
     if (fail(error)) return;
     // Keep existing items (so logged sets stay linked), update/insert the rest, remove dropped ones
-    const keepIds = items.filter((i) => i.id).map((i) => i.id);
+    const keepIds = ordered.filter((i) => i.id).map((i) => i.id);
     const dropped = (w?.workout_items || []).filter((i) => !keepIds.includes(i.id)).map((i) => i.id);
     if (dropped.length) { const { error: de } = await sb.from("workout_items").delete().in("id", dropped); if (fail(de)) return; }
-    const payload = items.map((i, pos) => {
-      const r = { workout_id: saved.id, exercise_id: i.exercise_id, position: pos, target_sets: i.target_sets ?? null, target_reps: i.target_reps ?? null,
+    const payload = ordered.map((i, pos) => {
+      const r = { workout_id: saved.id, exercise_id: i.exercise_id, position: pos, section: i.section, target_sets: i.target_sets ?? null, target_reps: i.target_reps ?? null,
         target_weight_kg: i.target_weight_kg ?? null, target_seconds: i.target_seconds ?? null, rest_seconds: i.rest_seconds ?? null, notes: i.notes || null };
       if (i.id) r.id = i.id; return r;
     });
@@ -1230,8 +1298,13 @@ async function workoutBuilder(clientId, workoutId) {
 async function trainerLibrary() {
   const { data } = await sb.from("exercises").select("*").eq("trainer_id", me.id).order("name");
   const all = data || [];
+  const have = new Set(all.map((x) => x.name.toLowerCase())); const missing = STARTER.filter((x) => !have.has(x.name.toLowerCase()));
   render(`<div class="row between"><h1>Library</h1><button class="small" onclick="location.hash='#/exercise/new'">+ Exercise</button></div>
     <p class="muted">Every exercise you add is saved here and reusable for any client. Mark some as bonus videos to reward 7, 14 and 30-day streaks.</p>
+    ${missing.length ? `<div class="card starter"><div class="row between" style="align-items:flex-start;gap:14px"><div><h3>Starter library</h3>
+      <p class="muted" style="margin:0">${missing.length} common exercises with animated demos, form cues and warm-up, main set and cool-down types. Edit any of them, and your own videos replace the animations.</p></div>
+      ${moveSvg("squat", { label: false, props: false })}</div>
+      <button class="block" id="addStarter" style="margin-top:12px">Add ${missing.length} starter exercises</button></div>` : ""}
     <input id="q" placeholder="Search exercises…" style="margin-bottom:8px">
     <div id="mg">${["All", ...MUSCLES].map((m, i) => `<span class="chip ${i ? "" : "on"}" data-m="${m}" role="button">${m}</span>`).join("")}</div>
     <div class="card" id="list" style="margin-top:10px"></div>`);
@@ -1240,12 +1313,20 @@ async function trainerLibrary() {
     const q = $("#q").value.toLowerCase();
     const rows = all.filter((x) => (mg === "All" || x.muscle_group === mg) && x.name.toLowerCase().includes(q));
     $("#list").innerHTML = rows.map((x) => `<a class="list-item" href="#/exercise/${x.id}"><div class="grow"><b>${esc(x.name)}</b>
-      <div class="muted">${esc(x.muscle_group)}, ${(x.equipment || []).map(esc).join(", ") || "Bodyweight"}</div></div>
-      ${typesOf(x).slice(0, 2).map((t) => `<span class="chip">${esc(t)}</span>`).join("")}${x.reward_streak ? `<span class="chip good">Bonus ${x.reward_streak}d</span>` : ""} ${x.video_path ? "Video" : `<span class="chip warn">No video</span>`} ${x.cues?.length ? "" : `<span class="chip warn">No cues</span>`}</a>`).join("")
+      <div class="muted">${esc(x.muscle_group)}, ${(x.equipment || []).map(esc).join(", ") || "Bodyweight"}</div>
+      <div class="li-chips">${typesOf(x).map((t) => `<span class="chip">${esc(t)}</span>`).join("")}${x.reward_streak ? `<span class="chip good">Bonus ${x.reward_streak}d</span>` : ""}${x.video_path ? `<span class="chip good">Video</span>` : moveFor(x) ? `<span class="chip">Animated</span>` : `<span class="chip warn">No demo</span>`}${x.cues?.length ? "" : `<span class="chip warn">No cues</span>`}</div></div>
+      ${moveFor(x) && !x.video_path ? `<span class="thumb">${moveSvg(moveFor(x), { animate: false, label: false, props: (x.equipment || []).length > 0 })}</span>` : ""}</a>`).join("")
       || `<div class="empty">${all.length ? "No matches." : "Start your library — add your first exercise."}</div>`;
+    startMoves($("#list"));
   };
   $("#q").oninput = draw;
   $$("#mg .chip").forEach((c) => (c.onclick = () => { $$("#mg .chip").forEach((x) => x.classList.remove("on")); c.classList.add("on"); mg = c.dataset.m; draw(); }));
+  $("#addStarter")?.addEventListener("click", async (e) => {
+    e.target.disabled = true; e.target.textContent = "Adding…";
+    const rows = missing.map((x) => ({ trainer_id: me.id, name: x.name, muscle_group: x.muscle_group, equipment: x.equipment, instructions: x.instructions, cues: x.cues, categories: x.types, demo_move: x.demo }));
+    const { error } = await sb.from("exercises").insert(rows);
+    if (!fail(error)) { toast(`${rows.length} exercises added to your library`); trainerLibrary(); } else { e.target.disabled = false; e.target.textContent = "Try again"; }
+  });
   draw();
 }
 
@@ -1271,6 +1352,10 @@ async function exerciseEditor(id) {
       <select name="rw" id="rw">${[["", "No, part of the normal library"], ["7", "Unlocks at a 7-day streak"], ["14", "Unlocks at a 14-day streak"], ["30", "Unlocks at a 30-day streak"]]
         .map(([v, l]) => `<option value="${v}" ${String(ex.reward_streak ?? "") === v ? "selected" : ""}>${l}</option>`).join("")}</select>
       <p class="muted">Bonus videos are free rewards. Clients can't see them until their streak gets there.</p>
+      <label for="dm">Animated demo <span class="muted">(shown until you upload a video)</span></label>
+      <select id="dm" name="dm">${[["", "Match automatically from the name"], ...Object.entries(MOVES).map(([k, m]) => [k, m.label]), ["none", "No animation"]]
+        .map(([v, l]) => `<option value="${v}" ${(ex.demo_move || "") === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
+      <div id="dmPrev" class="dm-prev"></div>
       <label>Demo video</label>
       ${url ? `<video src="${esc(url)}" controls playsinline style="width:100%;border-radius:10px;max-height:260px"></video>` : ""}
       <input type="file" name="video" accept="video/*">
@@ -1295,6 +1380,13 @@ async function exerciseEditor(id) {
     $("#tyNew").value = "";
   };
   $("#tyNew").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("#tyAdd").click(); } });
+  const preview = () => {
+    const f = $("#ef"); const mv = moveFor({ name: f.name.value, demo_move: f.dm.value || null });
+    $("#dmPrev").innerHTML = mv ? moveSvg(mv, { label: false, props: $$("#eq .chip.on").length > 0 }) + `<p class="muted" style="margin:6px 0 0">${esc(MOVES[mv].label)}${f.dm.value ? "" : ", matched from the name"}</p>`
+      : `<p class="muted" style="margin:0">No animation. Choose one above, or upload a video.</p>`;
+    startMoves($("#dmPrev"));
+  };
+  $("#dm").onchange = preview; $("#ef").name.addEventListener("input", preview); $$("#eq .chip").forEach((c) => c.addEventListener("click", preview)); preview();
   $("#ai").onclick = async () => {
     const f = $("#ef"); if (!f.name.value) return toast("Add the exercise name first");
     const b = $("#ai"); b.disabled = true; b.textContent = "Thinking…";
@@ -1327,7 +1419,7 @@ async function exerciseEditor(id) {
     }
     const row = { trainer_id: me.id, name: f.name.value.trim(), muscle_group: f.mg.value, equipment: $$("#eq .chip.on").map((c) => c.dataset.e),
       instructions: f.ins.value || null, cues: f.cues.value.split("\n").map((s) => s.trim()).filter(Boolean), video_path,
-      reward_streak: f.rw.value ? Number(f.rw.value) : null, categories: $$("#ty .chip.on").map((c) => c.dataset.t) };
+      reward_streak: f.rw.value ? Number(f.rw.value) : null, categories: $$("#ty .chip.on").map((c) => c.dataset.t), demo_move: f.dm.value || null };
     const { error } = isNew ? await sb.from("exercises").insert(row) : await sb.from("exercises").update(row).eq("id", id);
     btn.disabled = false; btn.textContent = "Save to library";
     if (!fail(error)) { toast("Saved to library"); go("library"); }
