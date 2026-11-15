@@ -86,10 +86,31 @@ const ICON = {
   flame: I('<path d="M12 21c-3.9 0-6.5-2.6-6.5-6 0-3.6 3-5.6 3.6-9 1.8 1.2 3 3 3.2 5 .9-.7 1.5-1.8 1.7-3.2 2.3 1.9 4.5 4.6 4.5 7.6 0 3.2-2.6 5.6-6.5 5.6z"/>'),
   dice: I('<rect x="3.5" y="3.5" width="17" height="17" rx="4"/><circle cx="8.5" cy="8.5" r="1.2" fill="currentColor"/><circle cx="15.5" cy="15.5" r="1.2" fill="currentColor"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/>'),
   medal: I('<circle cx="12" cy="14" r="6"/><path d="M8.5 9 6 3h4l2 4 2-4h4l-2.5 6"/>'),
+  check: I('<path d="m5 12.5 4.5 4.5L19 7.5"/>'),
+  close: I('<path d="M6 6l12 12M18 6 6 18"/>'),
+  up: I('<path d="M12 19V5M6 11l6-6 6 6"/>'),
   ig: I('<rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r=".8" fill="currentColor"/>'),
 };
+// Brand forms: the O of the logo as a heavy ring, a hatched arc, and the full stop as a solid dot.
+// Arranged from a seed so each screen gets its own composition.
+function seedOf(str) { let h = 2166136261; for (const c of String(str)) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
+function forms(seed, { w = 400, h = 330, scale = 1 } = {}) {
+  const r = (n) => { seed = (Math.imul(seed ^ (seed >>> 15), 2246822507) + n) >>> 0; return (seed % 1000) / 1000; };
+  const R = (118 + r(1) * 46) * scale, cx = w * (0.7 + r(2) * 0.18), cy = h * (0.18 + r(3) * 0.2);
+  const rot = Math.round(-30 + r(4) * 60), dotR = (14 + r(5) * 8) * scale;
+  const ang = (100 + r(6) * 50) * Math.PI / 180, far = R + 30 * scale;
+  const dx = Math.min(w - dotR - 12, Math.max(dotR + 12, cx + Math.cos(ang) * far)), dy = Math.min(h * 0.62, Math.max(dotR + 12, cy + Math.sin(ang) * far));
+  const id = "f" + (seed % 100000);
+  const lines = Array.from({ length: 22 }, (_, i) => `<line x1="${-w}" y1="${i * 14 - 40}" x2="${w * 2}" y2="${i * 14 - 40 + w * 0.5}"/>`).join("");
+  return `<svg class="forms" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMaxYMin slice" aria-hidden="true">
+    <defs><clipPath id="${id}"><circle cx="${cx - R * 0.55}" cy="${cy + R * 0.5}" r="${R * 0.92}"/></clipPath></defs>
+    <circle class="f-thin" cx="${cx - R * 0.55}" cy="${cy + R * 0.5}" r="${R * 0.92}"/>
+    <g class="f-hatch" clip-path="url(#${id})" transform="rotate(${rot} ${cx} ${cy})">${lines}</g>
+    <circle class="f-ring" cx="${cx}" cy="${cy}" r="${R}" stroke-width="${26 * scale}"/>
+    <circle class="f-dot" cx="${dx}" cy="${dy}" r="${dotR}"/></svg>`;
+}
 function heroHtml({ photo, tag, title, sub, actions = "" }) {
-  return `<section class="hero">${photo ? `<img class="photo" src="${esc(photo)}" alt="">` : `<span class="mark" aria-hidden="true">Or.</span>`}
+  return `<section class="hero">${photo ? `<img class="photo" src="${esc(photo)}" alt="">` : forms(seedOf(title))}
     ${tag ? `<span class="tag">${esc(tag)}</span>` : ""}
     <h1>${esc(title)}</h1>${sub ? `<p class="muted" style="margin:0">${esc(sub)}</p>` : ""}
     ${actions ? `<div class="actions">${actions}</div>` : ""}</section>`;
@@ -128,7 +149,7 @@ function offersHtml(keys) {
 }
 function bindPay() {
   $$("[data-pay]").forEach((a) => a.addEventListener("click", () => {
-    if (me?.trainer_id) sb.from("messages").insert({ client_id: me.id, sender_id: me.id, body: `💳 I've started payment for: ${a.dataset.pay}` });
+    if (me?.trainer_id) sb.from("messages").insert({ client_id: me.id, sender_id: me.id, body: `Payment started: ${a.dataset.pay}` });
   }));
 }
 function today() { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10); }
@@ -225,7 +246,7 @@ $("#signOut").onclick = async () => { await sb.auth.signOut(); go(""); };
 
 function authView(mode = "in") {
   $("#topbar").hidden = true; $("#tabbar").hidden = true;
-  render(`<div class="auth-hero">${CONFIG.PHOTOS.welcome ? `<img class="photo" src="${esc(CONFIG.PHOTOS.welcome)}" alt="">` : ""}
+  render(`<div class="auth-hero">${CONFIG.PHOTOS.welcome ? `<img class="photo" src="${esc(CONFIG.PHOTOS.welcome)}" alt="">` : forms(7, { w: 400, h: 380, scale: 1.15 })}
     <div><img src="icons/logo.png" class="logo-big" alt="${esc(CONFIG.APP_NAME)}">
     <p class="muted" style="margin:0;color:#C9C6BC">Your programme, your progress, your coach.</p></div></div>
     <div class="auth">
@@ -658,7 +679,7 @@ async function workoutView(id) {
         ${timed ? `<input type="number" inputmode="numeric" placeholder="sec" value="${d?.seconds ?? it.target_seconds ?? ""}" data-f="seconds">`
           : `<input type="number" inputmode="numeric" placeholder="reps" value="${d?.reps ?? it.target_reps ?? ""}" data-f="reps">`}
         <input type="number" inputmode="decimal" step="0.5" placeholder="kg" value="${d?.weight_kg ?? it.target_weight_kg ?? ""}" data-f="weight_kg">
-        <button class="${d ? "" : "secondary"} small" title="Log set">${d ? "✓" : "Log"}</button></div>`;
+        <button class="${d ? "" : "secondary"} small" title="Log set" aria-label="${d ? "Logged" : "Log set"}">${d ? ICON.check : "Log"}</button></div>`;
     }).join("");
     return `<div class="card ex-card">
       <div class="row between"><h2>${esc(ex.name)}</h2><span class="chip">${esc(ex.muscle_group)}</span></div>
@@ -689,7 +710,7 @@ async function workoutView(id) {
       : sb.from("set_logs").insert(rec).select().single();
     const { data, error } = await q; btn.disabled = false;
     if (fail(error)) return;
-    row.dataset.log = data.id; row.classList.add("done"); btn.textContent = "✓"; btn.classList.remove("secondary");
+    row.dataset.log = data.id; row.classList.add("done"); btn.innerHTML = ICON.check; btn.classList.remove("secondary");
     const it = items.find((i) => i.id === row.dataset.item);
     if (it.target_weight_kg && vals.weight_kg > it.target_weight_kg) toast("Heavier than target — strong!");
     else if (it.target_reps && vals.reps > it.target_reps) toast("Extra reps — nice work!");
@@ -706,7 +727,7 @@ async function workoutView(id) {
   $("#finish")?.addEventListener("click", async () => {
     const { error } = await sb.from("workouts").update({ completed_at: new Date().toISOString() }).eq("id", w.id);
     if (fail(error)) return;
-    await sb.from("messages").insert({ client_id: me.id, sender_id: me.id, body: `✅ Finished "${w.name}"` });
+    await sb.from("messages").insert({ client_id: me.id, sender_id: me.id, body: `Finished "${w.name}"` });
     toast("Workout complete! Your coach has been notified"); go("home");
   });
 }
@@ -720,7 +741,7 @@ async function signedMap(rows) {
 }
 function tileHtml(x, urls, href) {
   const u = urls[x.video_path];
-  return `<a class="tile" href="${href}">${u ? `<video src="${esc(u)}#t=0.8" muted playsinline preload="metadata"></video>` : `<span class="ph" aria-hidden="true">${esc(x.name[0] || "")}</span>`}
+  return `<a class="tile" href="${href}">${u ? `<video src="${esc(u)}#t=0.8" muted playsinline preload="metadata"></video>` : `<span class="ph" aria-hidden="true">${forms(seedOf(x.name), { w: 200, h: 250, scale: 0.55 })}</span>`}
     <b>${esc(x.name)}</b><span>${esc(x.muscle_group)}${missingEquipment(x, me.equipment).length ? ", needs kit" : ""}</span></a>`;
 }
 async function clientLibrary() {
@@ -833,7 +854,7 @@ async function foodView(date) {
     <div style="margin-top:12px">${foodCard(f)}</div>
     ${meals.map((m) => { const rs = f.dayRows.filter((r) => r.meal === m); return `<div class="card"><div class="row between"><h3>${m}</h3><span class="muted">${rs.reduce((s, r) => s + Number(r.points), 0)} pts</span></div>
       ${rs.map((r) => `<div class="list-item" style="cursor:default"><div class="grow">${esc(r.food_name)} <span class="muted">× ${r.servings}</span></div><b>${r.points}</b>
-        <button class="small secondary" data-del="${r.id}" aria-label="Remove">✕</button></div>`).join("") || `<p class="muted" style="margin:4px 0 0">Nothing yet</p>`}</div>`; }).join("")}
+        <button class="small secondary" data-del="${r.id}" aria-label="Remove">${ICON.close}</button></div>`).join("") || `<p class="muted" style="margin:4px 0 0">Nothing yet</p>`}</div>`; }).join("")}
     <div class="card" id="add"><h3>Add food</h3>
       <input id="fq" placeholder="Search: pap, biltong, rusk…">
       <div class="grid2" style="margin-top:8px"><select id="meal">${meals.map((m) => `<option ${m === defaultMeal() ? "selected" : ""}>${m}</option>`).join("")}</select>
@@ -1002,7 +1023,7 @@ async function profileView() {
     <form class="card" id="pf">
       <label>Full name</label><input name="name" value="${esc(me.full_name)}">
       ${me.role === "client" ? `<label>What do I want to track?</label>
-      <div id="tr">${[["exercise", "🏋️ Exercise"], ["nutrition", "🍽️ Nutrition"]].map(([k, l]) => `<span class="chip ${(me.tracks || ["exercise"]).includes(k) ? "on" : ""}" data-t="${k}" role="button">${l}</span>`).join("")}</div>
+      <div id="tr">${[["exercise", "Exercise"], ["nutrition", "Nutrition"]].map(([k, l]) => `<span class="chip ${(me.tracks || ["exercise"]).includes(k) ? "on" : ""}" data-t="${k}" role="button">${l}</span>`).join("")}</div>
       <label>My goal</label><input name="goal" value="${esc(me.goal)}" placeholder="e.g. Lose 5 kg, run 5 km, get stronger">
       <label>Equipment I have</label><p class="muted">Your coach uses this to fit workouts to your space.</p>
       <div id="eq">${EQUIPMENT.map((e) => `<span class="chip ${owned.includes(e) ? "on" : ""}" data-e="${esc(e)}" role="button">${esc(e)}</span>`).join("")}</div>` : ""}
@@ -1041,7 +1062,7 @@ async function profileView() {
   });
   $("#delReq")?.addEventListener("click", async () => {
     if (!confirm("Send your coach a request to delete your account and data?")) return;
-    const { error } = await sb.from("messages").insert({ client_id: me.id, sender_id: me.id, body: "🗑️ Please delete my account and all my data (POPIA request)." });
+    const { error } = await sb.from("messages").insert({ client_id: me.id, sender_id: me.id, body: "Please delete my account and all my data (POPIA request)." });
     if (!fail(error)) toast("Request sent to your coach");
   });
 }
@@ -1054,7 +1075,7 @@ async function trainerClients() {
   const lastSeen = {}; (recent || []).forEach((r) => (lastSeen[r.client_id] ??= r.logged_at));
   render(`<h1>Clients</h1>
     ${pending.length ? `<div class="card"><h3>New sign-ups (${pending.length})</h3>${pending.map((p) => `<div class="list-item"><div class="avatar">${esc(initials(p.full_name))}</div>
-      <div class="grow"><b>${esc(p.full_name)}</b><div class="muted">${esc(p.email)}, joined ${fmtDate(p.created_at)}${p.popia_consent_at ? "" : ", ⚠️ no consent"}</div></div>
+      <div class="grow"><b>${esc(p.full_name)}</b><div class="muted">${esc(p.email)}, joined ${fmtDate(p.created_at)}${p.popia_consent_at ? "" : ", no consent recorded"}</div></div>
       <button class="small" data-accept="${p.id}">Accept</button></div>`).join("")}</div>` : ""}
     <div class="card">${mine.map((p) => `<a class="list-item" href="#/client/${p.id}"><div class="avatar">${esc(initials(p.full_name))}</div>
       <div class="grow"><b>${esc(p.full_name)}</b> ${p.plan !== "free" ? `<span class="chip ${p.access_until && p.access_until < today() ? "warn" : "good"}">${p.plan === "pt" ? "PT" : "Library"}</span>` : ""}<div class="muted">${esc(p.goal || "No goal set")}</div></div>
@@ -1112,7 +1133,7 @@ async function trainerClient(id) {
   $("#acc").onsubmit = async (e) => {
     e.preventDefault(); const f = e.target;
     const { error } = await sb.from("profiles").update({ plan: f.plan.value, access_until: f.until.value || null }).eq("id", c.id);
-    if (!fail(error)) { toast("Access updated"); await sb.from("messages").insert({ client_id: c.id, sender_id: me.id, body: `✅ Your access is active${f.until.value ? " until " + fmtDate(f.until.value) : ""}. Enjoy!` }); }
+    if (!fail(error)) { toast("Access updated"); await sb.from("messages").insert({ client_id: c.id, sender_id: me.id, body: `Your access is active${f.until.value ? " until " + fmtDate(f.until.value) : ""}. Enjoy!` }); }
   };
 }
 
@@ -1132,7 +1153,7 @@ async function workoutBuilder(clientId, workoutId) {
     $("#items").innerHTML = items.map((it, i) => {
       const ex = lib.find((x) => x.id === it.exercise_id) || {};
       return `<div class="card" data-i="${i}"><div class="row between"><b>${i + 1}. ${esc(ex.name)}</b>
-        <span><button type="button" class="small secondary" data-up="${i}">↑</button> <button type="button" class="small secondary" data-rm="${i}">✕</button></span></div>
+        <span><button type="button" class="small secondary" data-up="${i}" aria-label="Move up">${ICON.up}</button> <button type="button" class="small secondary" data-rm="${i}" aria-label="Remove">${ICON.close}</button></span></div>
         ${swapHtml(swapSuggestions(ex, lib, c.equipment))}
         <div class="grid3"><div><label>Sets</label><input data-k="target_sets" type="number" value="${it.target_sets ?? ""}"></div>
         <div><label>Reps</label><input data-k="target_reps" type="number" value="${it.target_reps ?? ""}"></div>
@@ -1156,8 +1177,8 @@ async function workoutBuilder(clientId, workoutId) {
       <label>Notes</label><textarea name="notes" placeholder="Warm-up, focus for today…">${esc(w?.notes || "")}</textarea>
       <p class="muted" style="margin-top:8px">Client equipment: ${(c.equipment || []).map(esc).join(", ") || "not set"}</p></div>
     <div id="items"></div>
-    <div class="card"><label>Add exercise from library</label><div class="row"><select id="pick">${lib.map((x) => `<option value="${x.id}">${esc(x.name)} — ${esc(x.muscle_group)}${missingEquipment(x, c.equipment).length ? " ⚠️" : ""}</option>`).join("")}</select>
-      <button type="button" id="addEx">Add</button></div><p class="muted">⚠️ = client doesn't own the equipment (swap suggestions shown).</p></div>
+    <div class="card"><label>Add exercise from library</label><div class="row"><select id="pick">${lib.map((x) => `<option value="${x.id}">${esc(x.name)} — ${esc(x.muscle_group)}${missingEquipment(x, c.equipment).length ? " (needs kit)" : ""}</option>`).join("")}</select>
+      <button type="button" id="addEx">Add</button></div><p class="muted">Marked "needs kit": the client doesn't own that equipment, so swap suggestions are shown.</p></div>
     <div class="grid2"><button class="block">Save workout</button>${w ? `<button type="button" class="danger" id="del">Delete</button>` : ""}</div></form>`);
   draw();
   $("#addEx").onclick = () => { items.push({ exercise_id: $("#pick").value, target_sets: 3, target_reps: 10 }); draw(); };
@@ -1184,7 +1205,7 @@ async function workoutBuilder(clientId, workoutId) {
     const existing = payload.filter((p) => p.id); const fresh = payload.filter((p) => !p.id);
     if (existing.length) { const { error: ue } = await sb.from("workout_items").upsert(existing); if (fail(ue)) return; }
     if (fresh.length) { const { error: ie } = await sb.from("workout_items").insert(fresh); if (fail(ie)) return; }
-    if (!w) await sb.from("messages").insert({ client_id: clientId, sender_id: me.id, body: `📋 New workout ready: "${saved.name}"` });
+    if (!w) await sb.from("messages").insert({ client_id: clientId, sender_id: me.id, body: `New workout ready: "${saved.name}"` });
     toast("Workout saved"); go("client/" + clientId);
   };
 }
