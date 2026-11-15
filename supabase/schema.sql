@@ -693,3 +693,12 @@ alter table public.exercises add column if not exists category text;   -- Streng
 -- Which saved workout a client's workout was copied from. The copy is independent:
 -- editing it never changes the saved workout or anyone else's copy.
 alter table public.workouts add column if not exists template_id uuid references public.workout_templates(id) on delete set null;
+
+-- =====================================================================
+-- EXERCISE VIDEO LINKS, LEVELS, "GOOD FOR"; LIBRARY LOCKED BY DEFAULT
+-- =====================================================================
+alter table public.exercises add column if not exists video_url text check (video_url is null or video_url like 'https://%');
+alter table public.exercises add column if not exists level text;    -- Beginner, Intermediate, Advanced
+alter table public.exercises add column if not exists tags text[] not null default '{}';  -- Low impact, Seated, Balance, Single side
+-- The full library is a paid extra unless the coach chooses to make it free (Settings).
+alter table public.profiles alter column library_free set default false;

@@ -1050,14 +1050,29 @@ async function signedMap(rows) {
   const { data } = await sb.storage.from("exercise-videos").createSignedUrls(paths, 60 * 60 * 6);
   return Object.fromEntries((data || []).filter((d) => d.signedUrl).map((d) => [d.path, d.signedUrl]));
 }
+// Video links: the coach pastes a YouTube or Vimeo link; anything else opens as a link.
+function cleanUrl(v) { try { const u = new URL(String(v || "").trim()); return u.protocol === "https:" ? u.href : null; } catch { return null; } }
+function ytId(url) { return String(url || "").match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/)|youtu\.be\/)([\w-]{11})/)?.[1] || null; }
+function vimeoId(url) { return String(url || "").match(/vimeo\.com\/(?:video\/)?(\d{6,})/)?.[1] || null; }
+function linkHtml(link, title = "Demo video") {
+  const yt = ytId(link), vm = vimeoId(link);
+  if (yt) return `<div class="vid"><iframe src="https://www.youtube-nocookie.com/embed/${yt}?rel=0&playsinline=1" title="${esc(title)}" loading="lazy"
+    allow="accelerometer; encrypted-media; picture-in-picture; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe></div>`;
+  if (vm) return `<div class="vid"><iframe src="https://player.vimeo.com/video/${vm}" title="${esc(title)}" loading="lazy" allow="fullscreen; picture-in-picture" allowfullscreen></iframe></div>`;
+  const safe = cleanUrl(link);
+  return safe ? `<a class="btn secondary block" href="${esc(safe)}" target="_blank" rel="noopener">${ICON.library} Watch the demo video</a>` : "";
+}
+const ytThumb = (x) => (ytId(x.video_url) ? `https://i.ytimg.com/vi/${ytId(x.video_url)}/hqdefault.jpg` : null);
+// Order: her own uploaded video, then her video link, then the animation.
 function demoHtml(ex, url, opts = {}) {
   if (url) return `<video src="${esc(url)}" controls playsinline preload="metadata" loop muted></video>`;
+  if (ex.video_url) return linkHtml(ex.video_url, `${ex.name} demo`);
   const mv = moveFor(ex);
   return mv ? moveSvg(mv, { props: (ex.equipment || []).length > 0, ...opts }) : "";
 }
 function tileHtml(x, urls, href) {
   const u = urls[x.video_path];
-  return `<a class="tile" href="${href}">${u ? `<video src="${esc(u)}#t=0.8" muted playsinline preload="metadata"></video>` : `<span class="ph" aria-hidden="true">${moveFor(x) ? moveSvg(moveFor(x), { animate: false, label: false, props: (x.equipment || []).length > 0 }) : forms(seedOf(x.name), { w: 200, h: 250, scale: 0.55 })}</span>`}
+  return `<a class="tile" href="${href}">${u ? `<video src="${esc(u)}#t=0.8" muted playsinline preload="metadata"></video>` : ytThumb(x) && !moveFor(x) ? `<img class="ph" src="${esc(ytThumb(x))}" alt="" loading="lazy">` : `<span class="ph" aria-hidden="true">${moveFor(x) ? moveSvg(moveFor(x), { animate: false, label: false, props: (x.equipment || []).length > 0 }) : forms(seedOf(x.name), { w: 200, h: 250, scale: 0.55 })}</span>`}
     <b>${esc(x.name)}</b><span>${esc(x.muscle_group)}${missingEquipment(x, me.equipment).length ? ", needs kit" : ""}</span></a>`;
 }
 async function clientLibrary() {
@@ -1906,10 +1921,15 @@ const sectionOf = (it) => (SECTIONS.some((s) => s.key === it.section) ? it.secti
 
 // ---------------------------------------------------------------- exercise library
 const CATEGORIES = ["Strength", "Cardio", "Core", "Mobility", "Stretch", "Power", "Balance"];
+const LEVELS = ["Beginner", "Intermediate", "Advanced"];
+const GOOD_FOR = ["Low impact", "Seated", "Balance", "Single side"];
+const starterOf = (x) => STARTER.find((st) => st.name.toLowerCase() === (x.name || "").toLowerCase());
+const levelOf = (x) => x.level || starterOf(x)?.level || "Beginner";
+const tagsOf = (x) => (x.tags?.length ? x.tags : starterOf(x)?.tags || []);
 const catOf = (x) => x.category || STARTER.find((st) => st.name.toLowerCase() === (x.name || "").toLowerCase())?.category
   || ({ Core: "Core", Cardio: "Cardio", Mobility: "Mobility" }[x.muscle_group]) || "Strength";
 const starterRow = (x) => ({ trainer_id: me.id, name: x.name, category: x.category, muscle_group: x.muscle_group, equipment: x.equipment,
-  instructions: x.instructions, cues: x.cues, categories: x.types, demo_move: x.demo });
+  instructions: x.instructions, cues: x.cues, categories: x.types, demo_move: x.demo || "none", level: x.level, tags: x.tags || [] });
 const estMinutes = (its) => Math.max(5, Math.round((its || []).reduce((t, i) => {
   const sets = i.target_sets || 1; const work = i.target_seconds || (i.target_reps || 10) * 3; return t + sets * (work + (i.rest_seconds ?? 45));
 }, 0) / 60));
@@ -1934,7 +1954,9 @@ function filterBar(id, lib) {
   return `<div class="fbar" id="${id}"><input type="search" data-f="q" placeholder="Search by name, muscle or equipment" aria-label="Search exercises">
     <div class="fsel"><select data-f="cat" aria-label="Category"><option value="">All categories</option>${CATEGORIES.filter((c) => lib.some((x) => catOf(x) === c)).map((c) => `<option>${c}</option>`).join("")}</select>
     <select data-f="mg" aria-label="Muscle group"><option value="">All muscles</option>${muscles.map((m) => `<option>${m}</option>`).join("")}</select>
-    <select data-f="eq" aria-label="Equipment"><option value="">Any equipment</option><option value="none">Bodyweight only</option>${kit.map((e) => `<option>${esc(e)}</option>`).join("")}</select></div></div>`;
+    <select data-f="eq" aria-label="Equipment"><option value="">Any equipment</option><option value="none">Bodyweight only</option>${kit.map((e) => `<option>${esc(e)}</option>`).join("")}</select>
+    <select data-f="lv" aria-label="Level"><option value="">Any level</option>${LEVELS.map((l) => `<option>${l}</option>`).join("")}</select>
+    <select data-f="tg" aria-label="Good for"><option value="">Good for anyone</option>${GOOD_FOR.map((t) => `<option>${t}</option>`).join("")}<option value="video">Has a video</option></select></div></div>`;
 }
 function bindFilter(id, onChange) {
   const el = $("#" + id); const get = () => Object.fromEntries($$("[data-f]", el).map((i) => [i.dataset.f, i.value]));
@@ -1945,14 +1967,17 @@ function exMatch(x, f) {
   const q = (f.q || "").toLowerCase();
   return (!q || [x.name, x.muscle_group, catOf(x), ...(x.equipment || [])].join(" ").toLowerCase().includes(q))
     && (!f.cat || catOf(x) === f.cat) && (!f.mg || x.muscle_group === f.mg)
-    && (!f.eq || (f.eq === "none" ? !(x.equipment || []).length : (x.equipment || []).includes(f.eq)));
+    && (!f.eq || (f.eq === "none" ? !(x.equipment || []).length : (x.equipment || []).includes(f.eq)))
+    && (!f.lv || levelOf(x) === f.lv) && (!f.tg || (f.tg === "video" ? !!(x.video_url || x.video_path) : tagsOf(x).includes(f.tg)));
 }
 function exCard(x, { urls = {}, attrs = "", tag = "a", href = "", extra = "" } = {}) {
   const mv = moveFor(x); const u = urls[x.video_path];
   const media = u ? `<video src="${esc(u)}#t=0.8" muted playsinline loop autoplay preload="metadata"></video>`
+    : ytThumb(x) && !mv ? `<span class="ph yt"><img src="${esc(ytThumb(x))}" alt="" loading="lazy"><i aria-hidden="true"></i></span>`
     : mv ? moveSvg(mv, { label: false, props: (x.equipment || []).length > 0 }) : `<span class="ph">${forms(seedOf(x.name), { w: 200, h: 162, scale: 0.5 })}</span>`;
+  const badges = `${x.video_url ? `<span class="chip good">Video</span>` : ""}<span class="chip">${levelOf(x)}</span>${tagsOf(x).slice(0, 2).map((t) => `<span class="chip">${esc(t)}</span>`).join("")}`;
   return `<${tag} class="ex-tile" ${href ? `href="${href}"` : ""} ${attrs}>${media}<b>${esc(x.name)}</b>
-    <span>${esc([...new Set([catOf(x), x.muscle_group].filter(Boolean))].join(", "))}</span><span class="muted">${(x.equipment || []).map(esc).join(", ") || "Bodyweight"}</span>${extra}</${tag}>`;
+    <span>${esc([...new Set([catOf(x), x.muscle_group].filter(Boolean))].join(", "))}</span><span class="muted">${(x.equipment || []).map(esc).join(", ") || "Bodyweight"}</span><span class="ex-badges">${badges}</span>${extra}</${tag}>`;
 }
 
 async function trainerLibrary() {
@@ -1961,7 +1986,7 @@ async function trainerLibrary() {
   const have = new Set(all.map((x) => x.name.toLowerCase())); const missing = STARTER.filter((x) => !have.has(x.name.toLowerCase()));
   all.filter((x) => !x.category).forEach((x) => sb.from("exercises").update({ category: catOf(x) }).eq("id", x.id).then(() => {}));
   render(`<div class="row between"><h1>Exercises</h1><button class="small" onclick="location.hash='#/exercise/new'">${ICON.plus} Add exercise</button></div>
-    <p class="muted">Your exercise library: every move with its demo, muscles, category, equipment and how-to. Tap one to edit it or upload your own video in place of the animation.</p>
+    <p class="muted">Every move with its demo, muscles, category, level, equipment and how-to. Tap one to edit it, paste a YouTube link, or upload your own video. Filter by "Good for" to find low-impact, seated or balance options for clients with different needs.</p>
     ${missing.length ? `<div class="card row between" style="gap:12px"><div><b>${missing.length} more starter ${missing.length === 1 ? "exercise" : "exercises"} available</b><div class="muted">Animated demos, instructions and cues included</div></div><button class="small" id="addStarter">Add</button></div>` : ""}
     ${filterBar("lf", all)}
     <p class="muted" id="lcount" style="margin:8px 0"></p>
@@ -1971,7 +1996,7 @@ async function trainerLibrary() {
     const rows = all.filter((x) => exMatch(x, f));
     $("#lcount").textContent = `Showing ${rows.length} of ${all.length}`;
     $("#list").innerHTML = rows.map((x) => exCard(x, { urls, href: `#/exercise/${x.id}`,
-      extra: `${x.reward_streak ? `<span class="chip good">Bonus ${x.reward_streak}d</span>` : ""}${!x.video_path && !moveFor(x) ? `<span class="chip warn">No demo</span>` : ""}` })).join("")
+      extra: `${x.reward_streak ? `<span class="chip good">Bonus ${x.reward_streak}d</span>` : ""}${!x.video_path && !x.video_url && !moveFor(x) ? `<span class="chip warn">Add a video link</span>` : ""}` })).join("")
       || `<div class="empty" style="grid-column:1/-1">No exercises match. Clear a filter or add your own.</div>`;
     startMoves($("#list"));
   };
@@ -1987,13 +2012,22 @@ async function trainerLibrary() {
 function openPicker(lib, { title, suggest = [], owned = null, onPick, multi = true }) {
   document.body.insertAdjacentHTML("beforeend", `<div class="picker" id="picker" role="dialog" aria-label="${esc(title)}"><div class="picker-box">
     <div class="row between"><h2 style="margin:0">${esc(title)}</h2><button type="button" class="small" id="pkDone">${multi ? "Done" : "Cancel"}</button></div>
-    <div style="margin-top:10px">${filterBar("pf", lib)}</div><p class="muted" id="pkN" style="margin:8px 0">${multi ? "Tap exercises to add them. Tap Done when you're finished." : "Tap the exercise to use instead."}</p>
+    <div style="margin-top:10px">${filterBar("pf", lib)}</div>
+    <details class="qa" id="qa"><summary>Not in the library? Add a new exercise</summary>
+      <form id="qaF"><label for="qaN">Exercise name</label><input id="qaN" required maxlength="80" placeholder="e.g. Cossack squat">
+        <div class="grid2"><div><label for="qaC">Category</label><select id="qaC">${CATEGORIES.map((c) => `<option>${c}</option>`).join("")}</select></div>
+        <div><label for="qaM">Muscle group</label><select id="qaM">${MUSCLES.map((m) => `<option>${m}</option>`).join("")}</select></div></div>
+        <label for="qaV">Video link <span class="muted">(optional: YouTube, Vimeo or any page)</span></label>
+        <div class="row" style="gap:8px"><input id="qaV" type="url" inputmode="url" placeholder="Paste a link" style="flex:1;min-width:0"><a class="btn small secondary" id="qaY" href="https://www.youtube.com/" target="_blank" rel="noopener">Find on YouTube</a></div>
+        <button class="block" style="margin-top:10px">Add to library${multi ? " and this workout" : " and use it"}</button>
+        <p class="muted" style="margin:6px 0 0">You can add instructions, cues and equipment later in Exercises.</p></form></details>
+    <p class="muted" id="pkN" style="margin:8px 0">${multi ? "Tap exercises to add them. Tap Done when you're finished." : "Tap the exercise to use instead."}</p>
     <div id="pkList"></div></div></div>`);
   let added = 0;
   const close = () => $("#picker")?.remove();
   const draw = (f) => {
     const rows = lib.filter((x) => exMatch(x, f));
-    const plain = !f.q && !f.cat && !f.mg && !f.eq;
+    const plain = !f.q && !f.cat && !f.mg && !f.eq && !f.lv && !f.tg;
     const sug = plain ? rows.filter((x) => suggest.includes(x.id)) : [];
     const rest = rows.filter((x) => !sug.includes(x));
     const card = (x) => exCard(x, { tag: "button", attrs: `type="button" data-pick="${x.id}"`, extra: owned && missingEquipment(x, owned).length ? `<span class="chip warn">Needs kit</span>` : "" });
@@ -2009,6 +2043,21 @@ function openPicker(lib, { title, suggest = [], owned = null, onPick, multi = tr
   $("#pkDone").onclick = close;
   $("#picker").addEventListener("click", (e) => { if (e.target.id === "picker") close(); });
   const get = bindFilter("pf", draw); draw(get());
+  $("#qaN").oninput = () => { $("#qaY").href = `https://www.youtube.com/results?search_query=${encodeURIComponent($("#qaN").value + " exercise how to")}`; };
+  $("#qa").addEventListener("toggle", () => { if ($("#qa").open) { $("#qaN").value = $("#pf [data-f=q]").value; $("#qaN").oninput(); $("#qaN").focus(); } });
+  $("#qaF").onsubmit = async (e) => {
+    e.preventDefault(); const name = $("#qaN").value.trim(); if (!name) return;
+    const raw = $("#qaV").value.trim(); const video_url = raw ? cleanUrl(raw) : null;
+    if (raw && !video_url) return toast("That link doesn't look right. Copy it from the browser bar or the Share button.");
+    if (lib.some((x) => x.name.toLowerCase() === name.toLowerCase())) return toast(`"${name}" is already in your library. Search for it above.`);
+    const { data, error } = await sb.from("exercises").insert({ trainer_id: me.id, name, category: $("#qaC").value, muscle_group: $("#qaM").value,
+      equipment: [], cues: [], video_url, demo_move: null, level: "Beginner", tags: [] }).select().single();
+    if (fail(error)) return;
+    lib.push(data); lib.sort((a, b) => a.name.localeCompare(b.name)); onPick(data);
+    toast(`Added "${name}" to your library`);
+    if (!multi) return close();
+    added++; $("#pkN").textContent = `${added} added. Tap more, or Done.`; $("#qaF").reset(); $("#qa").open = false; draw(get());
+  };
 }
 
 // Drag cards by their handle, on touch or mouse. onDrop runs once the card lands.
@@ -2207,6 +2256,9 @@ async function exerciseEditor(id) {
       <label>Name</label><input name="name" required value="${esc(ex.name)}" placeholder="e.g. Goblet squat">
       <div class="grid2"><div><label>Category</label><select name="cat">${CATEGORIES.map((c) => `<option ${c === catOf(ex) ? "selected" : ""}>${c}</option>`).join("")}</select></div>
       <div><label>Muscle group</label><select name="mg">${MUSCLES.map((m) => `<option ${m === ex.muscle_group ? "selected" : ""}>${m}</option>`).join("")}</select></div></div>
+      <div class="grid2"><div><label>Level</label><select name="lv">${LEVELS.map((l) => `<option ${l === levelOf(ex) ? "selected" : ""}>${l}</option>`).join("")}</select></div><div></div></div>
+      <label>Good for <span class="muted">(helps you find options for clients with different needs)</span></label>
+      <div id="gf">${GOOD_FOR.map((t) => `<span class="chip ${tagsOf(ex).includes(t) ? "on" : ""}" data-g="${t}" role="button">${t}</span>`).join("")}</div>
       <label>Equipment needed <span class="muted">(none = bodyweight)</span></label>
       <div id="eq">${EQUIPMENT.filter((e) => e !== "Full gym").map((e) => `<span class="chip ${ex.equipment.includes(e) ? "on" : ""}" data-e="${esc(e)}" role="button">${esc(e)}</span>`).join("")}</div>
       <label>Type <span class="muted">(pick any that fit)</span></label>
@@ -2220,7 +2272,12 @@ async function exerciseEditor(id) {
       <select id="dm" name="dm">${[["", "Match automatically from the name"], ...Object.entries(MOVES).map(([k, m]) => [k, m.label]), ["none", "No animation"]]
         .map(([v, l]) => `<option value="${v}" ${(ex.demo_move || "") === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
       <div id="dmPrev" class="dm-prev"></div>
-      <label>Demo video</label>
+      <label for="vu">Video link <span class="muted">(YouTube, Vimeo or Instagram. Clients see it instead of the animation)</span></label>
+      <div class="row" style="gap:8px"><input id="vu" name="vu" type="url" inputmode="url" placeholder="Paste a YouTube link" value="${esc(ex.video_url || "")}" style="flex:1;min-width:0">
+        <a class="btn small secondary" id="ytFind" target="_blank" rel="noopener" href="#">Find on YouTube</a></div>
+      <p class="muted" style="margin:4px 0 0">On YouTube, tap Share, then Copy link, and paste it here. Only link videos you're happy to recommend.</p>
+      <div id="vuPrev"></div>
+      <label>Or upload your own video</label>
       ${url ? `<video src="${esc(url)}" controls playsinline style="width:100%;border-radius:10px;max-height:260px"></video>` : ""}
       <input type="file" name="video" accept="video/*">
       <p class="muted">Tip: film landscape or square, 10–20 seconds, side-on angle, max 100 MB.</p>
@@ -2232,7 +2289,11 @@ async function exerciseEditor(id) {
       <button class="block" style="margin-top:12px" id="save">Save to library</button>
       ${isNew ? "" : `<button type="button" class="block danger" style="margin-top:8px" id="del">Delete exercise</button>`}
     </form>`);
-  $$("#eq .chip, #ty .chip").forEach((c) => (c.onclick = () => c.classList.toggle("on")));
+  $$("#eq .chip, #ty .chip, #gf .chip").forEach((c) => (c.onclick = () => c.classList.toggle("on")));
+  const ytHref = () => ($("#ytFind").href = `https://www.youtube.com/results?search_query=${encodeURIComponent(($("#ef").name.value || "exercise") + " exercise how to")}`);
+  const vuPrev = () => { const v = $("#vu").value.trim(); $("#vuPrev").innerHTML = v && cleanUrl(v) ? linkHtml(v, "Preview") : v ? `<p class="muted" style="color:var(--warn)">That link doesn't look right.</p>` : ""; };
+  $("#ef").name.addEventListener("input", ytHref); ytHref();
+  $("#vu").addEventListener("change", vuPrev); vuPrev();
   $("#tyAdd").onclick = () => {
     const v = $("#tyNew").value.trim().replace(/\s+/g, " "); if (!v) return;
     const name = v[0].toUpperCase() + v.slice(1);
@@ -2283,7 +2344,9 @@ async function exerciseEditor(id) {
     }
     const row = { trainer_id: me.id, name: f.name.value.trim(), category: f.cat.value, muscle_group: f.mg.value, equipment: $$("#eq .chip.on").map((c) => c.dataset.e),
       instructions: f.ins.value || null, cues: f.cues.value.split("\n").map((s) => s.trim()).filter(Boolean), video_path,
-      reward_streak: f.rw.value ? Number(f.rw.value) : null, categories: $$("#ty .chip.on").map((c) => c.dataset.t), demo_move: f.dm.value || null };
+      reward_streak: f.rw.value ? Number(f.rw.value) : null, categories: $$("#ty .chip.on").map((c) => c.dataset.t), demo_move: f.dm.value || null,
+      level: f.lv.value, tags: $$("#gf .chip.on").map((c) => c.dataset.g), video_url: f.vu.value.trim() ? cleanUrl(f.vu.value) : null };
+    if (f.vu.value.trim() && !row.video_url) { btn.disabled = false; return toast("That video link doesn't look right. Copy it from the Share button."); }
     const { error } = isNew ? await sb.from("exercises").insert(row) : await sb.from("exercises").update(row).eq("id", id);
     btn.disabled = false; btn.textContent = "Save to library";
     if (!fail(error)) { toast("Saved to library"); go("library"); }

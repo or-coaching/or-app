@@ -542,3 +542,20 @@ button.small svg { width: 16px; height: 16px; }
 .wk-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .inline-assign { display: grid; grid-template-columns: 1fr auto auto; gap: 6px; margin-top: 10px; }
 .inline-assign select, .inline-assign input { font-size: .85rem; padding: 8px; }
+
+/* Video links, levels, quick add */
+.vid { position: relative; aspect-ratio: 16 / 9; border-radius: 14px; overflow: hidden; background: #000; margin: 10px 0; }
+.vid iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.ex-tile .ph.yt { position: relative; }
+.ex-tile .ph.yt img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ex-tile .ph.yt i { position: absolute; left: 50%; top: 50%; width: 38px; height: 26px; margin: -13px 0 0 -19px; border-radius: 8px; background: rgba(23, 26, 24, .8); }
+.ex-tile .ph.yt i::after { content: ""; position: absolute; left: 15px; top: 7px; border-style: solid; border-width: 6px 0 6px 10px; border-color: transparent transparent transparent var(--text); }
+.ex-badges { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
+.ex-badges .chip { margin: 0; font-size: .68rem; padding: 2px 7px; }
+.tile img.ph { object-fit: cover; }
+.fsel { grid-template-columns: repeat(3, 1fr); }
+details.qa { margin: 10px 0 0; border: 1px dashed rgba(156, 181, 154, .45); border-radius: 14px; padding: 10px 12px; }
+details.qa summary { cursor: pointer; font-weight: 600; color: var(--primary); font-size: .9rem; }
+details.qa form { margin-top: 6px; }
+.ex-tile .ph { position: relative; }
+.ex-tile .ph > svg, .ex-tile .ph .forms { position: absolute; inset: 0; width: 100%; height: 100%; }
