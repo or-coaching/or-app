@@ -411,3 +411,22 @@ button.small svg { width: 16px; height: 16px; }
 .card.weekly { border-radius: 20px 4px 20px 20px; }
 .li-chips { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
 .li-chips .chip { margin: 0; }
+
+/* Profile photos */
+.avatar { background-size: cover; background-position: center; overflow: hidden; }
+.avatar.has-photo { color: transparent; }
+.avatar.sm { width: 32px; height: 32px; font-size: .75rem; border: 0; }
+.avatar.lg { width: 52px; height: 52px; font-size: 1.1rem; }
+.avatar.xl { width: 76px; height: 76px; font-size: 1.5rem; border: 2px solid var(--primary); }
+#meBtn .avatar { width: 38px; height: 38px; }
+
+/* Progress photos */
+.compare { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+.compare figure { margin: 0; }
+.compare img, .ph-pick img { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 14px; display: block; background: var(--bg); }
+.compare figcaption { font-size: .82rem; color: var(--muted); margin-top: 6px; }
+.compare figcaption b { color: var(--text); }
+.ph-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.ph-item { min-width: 0; }
+.ph-item .muted { font-size: .74rem; }
+.ph-pick { padding: 0; background: none; border-radius: 14px; width: 100%; margin-bottom: 4px; }
