@@ -469,3 +469,58 @@ alter table public.exercises add column if not exists categories text[] not null
 alter table public.exercises add column if not exists demo_move text;            -- animation used until a video is uploaded
 alter table public.workout_items add column if not exists section text;          -- 'Warm-up', 'Main set', 'Cool-down'
 alter table public.profiles add column if not exists weights_note text check (length(weights_note) <= 300);  -- weights the client has
+
+-- =====================================================================
+-- PROFILE PHOTOS AND PROGRESS PHOTOS (private: the person and their coach only)
+-- =====================================================================
+alter table public.profiles add column if not exists avatar_path text;
+alter table public.profiles add column if not exists photos_opt_in boolean not null default false;
+alter table public.profiles add column if not exists photos_consent_at timestamptz;
+
+create table if not exists public.progress_photos (
+  id          uuid primary key default gen_random_uuid(),
+  client_id   uuid not null references public.profiles(id) on delete cascade,
+  taken_on    date not null default current_date,
+  angle       text not null default 'Front' check (angle in ('Front','Side','Back')),
+  path        text not null,
+  created_at  timestamptz not null default now()
+);
+create index if not exists progress_photos_client_idx on public.progress_photos (client_id, taken_on);
+alter table public.progress_photos enable row level security;
+drop policy if exists "client owns progress photos" on public.progress_photos;
+create policy "client owns progress photos" on public.progress_photos for all
+  using (client_id = auth.uid()) with check (client_id = auth.uid() and (select photos_opt_in from public.profiles where id = auth.uid()));
+drop policy if exists "coach sees opted-in progress photos" on public.progress_photos;
+create policy "coach sees opted-in progress photos" on public.progress_photos for select using (
+  public.coaches(client_id) and (select photos_opt_in from public.profiles where id = client_id));
+
+-- Storage files live under "<user id>/..." so the folder name says who owns them.
+create or replace function public.owner_of(object_name text)
+returns uuid language plpgsql immutable as $$
+begin
+  return split_part(object_name, '/', 1)::uuid;
+exception when others then return null;
+end; $$;
+
+insert into storage.buckets (id, name, public, file_size_limit) values ('avatars', 'avatars', false, 2097152) on conflict (id) do nothing;
+insert into storage.buckets (id, name, public, file_size_limit) values ('progress-photos', 'progress-photos', false, 5242880) on conflict (id) do nothing;
+
+drop policy if exists "avatars: owner, their coach or their clients can view" on storage.objects;
+create policy "avatars: owner, their coach or their clients can view" on storage.objects for select using (
+  bucket_id = 'avatars' and (public.owner_of(name) = auth.uid() or public.coaches(public.owner_of(name)) or public.owner_of(name) = public.my_trainer_id()));
+drop policy if exists "avatars: owner uploads" on storage.objects;
+create policy "avatars: owner uploads" on storage.objects for insert with check (bucket_id = 'avatars' and public.owner_of(name) = auth.uid());
+drop policy if exists "avatars: owner replaces" on storage.objects;
+create policy "avatars: owner replaces" on storage.objects for update using (bucket_id = 'avatars' and public.owner_of(name) = auth.uid());
+drop policy if exists "avatars: owner deletes" on storage.objects;
+create policy "avatars: owner deletes" on storage.objects for delete using (bucket_id = 'avatars' and public.owner_of(name) = auth.uid());
+
+drop policy if exists "progress photos: owner or coach can view" on storage.objects;
+create policy "progress photos: owner or coach can view" on storage.objects for select using (
+  bucket_id = 'progress-photos' and (public.owner_of(name) = auth.uid()
+    or (public.coaches(public.owner_of(name)) and (select photos_opt_in from public.profiles where id = public.owner_of(name)))));
+drop policy if exists "progress photos: owner uploads" on storage.objects;
+create policy "progress photos: owner uploads" on storage.objects for insert with check (
+  bucket_id = 'progress-photos' and public.owner_of(name) = auth.uid() and (select photos_opt_in from public.profiles where id = auth.uid()));
+drop policy if exists "progress photos: owner deletes" on storage.objects;
+create policy "progress photos: owner deletes" on storage.objects for delete using (bucket_id = 'progress-photos' and public.owner_of(name) = auth.uid());
