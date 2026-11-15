@@ -386,3 +386,24 @@ create policy "client owns challenges" on public.challenge_completions for all
   using (client_id = auth.uid()) with check (client_id = auth.uid());
 drop policy if exists "trainer reads challenges" on public.challenge_completions;
 create policy "trainer reads challenges" on public.challenge_completions for select using (public.coaches(client_id));
+
+-- =====================================================================
+-- DAILY CHECK-IN — energy, sleep, soreness (1–5) and an optional note
+-- =====================================================================
+create table if not exists public.checkins (
+  id            uuid primary key default gen_random_uuid(),
+  client_id     uuid not null references public.profiles(id) on delete cascade,
+  checkin_date  date not null default current_date,
+  energy        int check (energy between 1 and 5),
+  sleep         int check (sleep between 1 and 5),
+  soreness      int check (soreness between 1 and 5),
+  note          text check (length(note) <= 500),
+  created_at    timestamptz not null default now(),
+  unique (client_id, checkin_date)
+);
+alter table public.checkins enable row level security;
+drop policy if exists "client owns checkins" on public.checkins;
+create policy "client owns checkins" on public.checkins for all
+  using (client_id = auth.uid()) with check (client_id = auth.uid());
+drop policy if exists "trainer reads checkins" on public.checkins;
+create policy "trainer reads checkins" on public.checkins for select using (public.coaches(client_id));
