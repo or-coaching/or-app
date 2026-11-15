@@ -26,7 +26,7 @@ function seed() {
         plan: "free", popia_consent_at: at(-1), created_at: at(-1) },
     ],
     exercises: [], workouts: [], workout_items: [], set_logs: [], activities: [], body_metrics: [],
-    food_logs: [], custom_foods: [], messages: [], challenge_completions: [],
+    food_logs: [], custom_foods: [], messages: [], challenge_completions: [], checkins: [],
   };
   const ex = (name, muscle_group, equipment, cues, instructions) => { const e = { id: uid(), trainer_id: TRAINER, name, muscle_group, equipment, cues, instructions, video_path: null, created_at: at(-60) }; db.exercises.push(e); return e; };
   const squat = ex("Goblet squat", "Legs", ["Kettlebell"], ["Chest up, elbows inside knees", "Sit between your heels", "Drive through the middle of your foot", "Breathe out as you stand"], "Hold the bell at your chest. Feet just wider than hips, toes slightly out.");
@@ -77,6 +77,9 @@ function seed() {
     .forEach(([off, type, minutes, km]) => db.activities.push({ id: uid(), client_id: CLIENT, activity_date: day(off), type, minutes, distance_km: km || null, notes: type === "Roulette" ? "Kettlebell swing" : null, created_at: at(off, 18) }));
   // Nine daily challenges done (today's earns a badge)
   [-14, -12, -10, -8, -7, -5, -4, -3, -1].forEach((off) => db.challenge_completions.push({ id: uid(), client_id: CLIENT, challenge_date: day(off), challenge: "Daily challenge", created_at: at(off, 12) }));
+  // Check-ins (yesterday's was rough, so the coach view shows a flag)
+  [[-6, 4, 4, 2], [-5, 3, 3, 3], [-4, 4, 4, 2], [-3, 5, 4, 1], [-2, 4, 3, 3], [-1, 2, 2, 4, "Bad night, legs heavy from Friday"]]
+    .forEach(([off, energy, sleep, soreness, note]) => db.checkins.push({ id: uid(), client_id: CLIENT, checkin_date: day(off), energy, sleep, soreness, note: note || null, created_at: at(off, 6) }));
   // Weigh-ins
   [[-35, 85.6], [-28, 85.0], [-21, 84.3], [-14, 83.9], [-7, 83.4], [-1, 82.9]].forEach(([off, kg]) => db.body_metrics.push({ id: uid(), client_id: CLIENT, metric_date: day(off), weight_kg: kg, waist_cm: null, body_fat_pct: null, created_at: at(off) }));
   // Food
@@ -125,7 +128,7 @@ class Query {
   constructor(table) { this.t = table; this.f = []; this.op = "select"; this.sel = "*"; this.ret = false; }
   select(sel = "*", opts = {}) { if (this.op === "select") this.sel = sel; else this.ret = true; this.count = opts.count; this.head = opts.head; return this; }
   insert(rows) { this.op = "insert"; this.rows = [].concat(rows); return this; }
-  upsert(rows) { this.op = "upsert"; this.rows = [].concat(rows); return this; }
+  upsert(rows, opts = {}) { this.op = "upsert"; this.rows = [].concat(rows); this.conflict = opts.onConflict; return this; }
   update(vals) { this.op = "update"; this.vals = vals; return this; }
   delete() { this.op = "delete"; return this; }
   eq(c, v) { this.f.push((r) => r[c] === v); return this; }
@@ -144,7 +147,8 @@ class Query {
     let out;
     if (this.op === "insert" || this.op === "upsert") {
       out = this.rows.map((row) => {
-        const existing = this.op === "upsert" && row.id && T.find((r) => r.id === row.id);
+        const keys = this.conflict ? this.conflict.split(",") : ["id"];
+        const existing = this.op === "upsert" && T.find((r) => keys.every((k) => row[k] !== undefined && r[k] === row[k]));
         if (existing) return Object.assign(existing, row);
         if (this.t === "challenge_completions" && T.some((r) => r.client_id === row.client_id && r.challenge_date === (row.challenge_date || localIso(new Date()))))
           throw { message: "Already done today" };

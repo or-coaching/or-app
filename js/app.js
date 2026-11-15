@@ -333,20 +333,21 @@ window.addEventListener("hashchange", route);
 // ================================================================ CLIENT
 // Everything that counts as "showing up": sets, activities, finished workouts, daily challenges.
 async function loadEngagement() {
-  const [logs, { data: acts }, { data: done }, { data: ch }, { data: metrics }, food] = await Promise.all([
+  const [logs, { data: acts }, { data: done }, { data: ch }, { data: metrics }, { data: cks }, food] = await Promise.all([
     loadLogs(me.id),
     sb.from("activities").select("*").eq("client_id", me.id),
     sb.from("workouts").select("completed_at").eq("client_id", me.id).not("completed_at", "is", null),
     sb.from("challenge_completions").select("*").eq("client_id", me.id),
     sb.from("body_metrics").select("*").eq("client_id", me.id).order("metric_date"),
+    sb.from("checkins").select("*").eq("client_id", me.id).order("checkin_date"),
     tracksNut() ? sb.from("food_logs").select("log_date").eq("client_id", me.id) : Promise.resolve({ data: [] }),
   ]);
   const doneW = (done || []).filter((w) => w.completed_at);
   const activeDays = [...logs.map((l) => l.logged_at.slice(0, 10)), ...(acts || []).map((a) => a.activity_date),
-    ...doneW.map((w) => w.completed_at.slice(0, 10)), ...(ch || []).map((c) => c.challenge_date)];
+    ...doneW.map((w) => w.completed_at.slice(0, 10)), ...(ch || []).map((c) => c.challenge_date), ...(cks || []).map((c) => c.checkin_date)];
   const foodDays = new Set((food.data || []).map((f) => f.log_date)).size;
   const stats = badgeStats({ logs, workoutsDone: doneW.length, activities: acts || [], challenges: ch || [], metrics: metrics || [], foodDays, activeDays, todayIso: today() });
-  return { logs, acts: acts || [], ch: ch || [], metrics: metrics || [], activeDays, stats, earned: BADGES.filter((b) => b.test(stats)) };
+  return { logs, acts: acts || [], ch: ch || [], metrics: metrics || [], checkins: cks || [], activeDays, stats, earned: BADGES.filter((b) => b.test(stats)) };
 }
 
 // Show a medal moment the first time a badge is earned on this device.
@@ -362,6 +363,34 @@ function celebrate(earned) {
     ${medal(fresh, true, 140)}<h2>${esc(fresh.title)}</h2><p class="muted">${esc(fresh.desc)}. That's one for the collection.</p>
     <button class="block" id="celOk">Keep going</button></div></div>`);
   $("#celOk").onclick = () => $("#cel").remove();
+}
+
+const CHECKIN = [
+  { key: "energy", label: "Energy", low: "Flat", high: "Buzzing" },
+  { key: "sleep", label: "Sleep", low: "Poor", high: "Great" },
+  { key: "soreness", label: "Soreness", low: "None", high: "Very sore" },
+];
+function checkinCard(done) {
+  if (done) return `<div class="card checkin done"><div class="row between"><h3>Today's check-in</h3><button class="small secondary" id="ckEdit">Edit</button></div>
+    <div class="ck-summary">${CHECKIN.map((q) => `<div><span class="stat">${done[q.key] ?? "–"}</span><span class="stat-label">${q.label}</span></div>`).join("")}</div>
+    ${done.note ? `<p class="muted" style="margin:10px 0 0">${esc(done.note)}</p>` : ""}</div>`;
+  return `<form class="card checkin" id="ckForm"><h3>How are you today?</h3><p class="muted" style="margin:0 0 4px">Three taps. Your coach uses this to adjust your training.</p>
+    ${CHECKIN.map((q) => `<fieldset class="ck-q"><legend>${q.label}</legend><div class="ck-scale">${[1, 2, 3, 4, 5].map((n) =>
+      `<label><input type="radio" name="${q.key}" value="${n}" required><span>${n}</span></label>`).join("")}</div>
+      <div class="ck-ends"><span>${q.low}</span><span>${q.high}</span></div></fieldset>`).join("")}
+    <label for="ckNote">Anything your coach should know?</label><input id="ckNote" name="note" maxlength="500" placeholder="Optional, e.g. stiff lower back">
+    <button class="block" style="margin-top:14px">Save check-in</button></form>`;
+}
+function bindCheckin(after) {
+  $("#ckEdit")?.addEventListener("click", () => {
+    const card = $("#ckEdit").closest(".card"); card.outerHTML = checkinCard(null); bindCheckin(after);
+  });
+  $("#ckForm")?.addEventListener("submit", async (e) => {
+    e.preventDefault(); const f = e.target;
+    const row = { client_id: me.id, checkin_date: today(), energy: +f.energy.value, sleep: +f.sleep.value, soreness: +f.soreness.value, note: f.note.value.trim() || null };
+    const { error } = await sb.from("checkins").upsert(row, { onConflict: "client_id,checkin_date" });
+    if (!fail(error)) { toast("Check-in saved"); after(); }
+  });
 }
 
 async function clientHome() {
@@ -405,6 +434,7 @@ async function clientHome() {
       <a href="#/progress">${ICON.progress} Progress</a>
       ${CONFIG.INSTAGRAM_URL ? `<a href="${esc(CONFIG.INSTAGRAM_URL)}" target="_blank" rel="noopener">${ICON.ig} Instagram</a>` : ""}
     </nav>
+    ${checkinCard(eng.checkins.find((c) => c.checkin_date === today()))}
     <div class="card"><p class="muted" style="margin:0 0 6px">Today's challenge</p>
       <div class="challenge"><span class="q">${esc(challenge)}</span>
       ${chDone ? `<button class="small done" disabled>Done</button>` : `<button class="small" id="chDone">Done it</button>`}</div></div>
@@ -425,6 +455,7 @@ async function clientHome() {
       <div class="card"><div class="stat">${w?.weight_kg ?? "–"}</div><div class="stat-label">kg${wDelta ? ` <span class="vs ${wDelta <= 0 ? "up" : "down"}">${wDelta > 0 ? "+" : ""}${wDelta}</span>` : ""}</div></div>
     </div>
     <div class="card tip"><p class="muted" style="margin:0 0 4px">Coach's tip</p><p style="margin:0">${esc(tip)}</p></div>`);
+  bindCheckin(clientHome);
   $("#chDone")?.addEventListener("click", async () => {
     const { error } = await sb.from("challenge_completions").insert({ client_id: me.id, challenge_date: today(), challenge });
     if (!fail(error)) { toast("Challenge done. That counts towards your streak."); clientHome(); }
@@ -953,11 +984,11 @@ async function profileView() {
     if (!fail(error)) { me.library_free = e.target.checked; toast(e.target.checked ? "Library is free" : "Library is now a paid extra"); }
   });
   $("#export")?.addEventListener("click", async () => {
-    const [p, m, a, l, msg, fl] = await Promise.all([
+    const [p, m, a, l, msg, fl, ck] = await Promise.all([
       sb.from("profiles").select("*").eq("id", me.id).single(), sb.from("body_metrics").select("*").eq("client_id", me.id),
       sb.from("activities").select("*").eq("client_id", me.id), sb.from("set_logs").select("*").eq("client_id", me.id),
-      sb.from("messages").select("*").eq("client_id", me.id), sb.from("food_logs").select("*").eq("client_id", me.id)]);
-    const blob = new Blob([JSON.stringify({ profile: p.data, body_metrics: m.data, activities: a.data, sets: l.data, messages: msg.data, food: fl.data }, null, 2)], { type: "application/json" });
+      sb.from("messages").select("*").eq("client_id", me.id), sb.from("food_logs").select("*").eq("client_id", me.id), sb.from("checkins").select("*").eq("client_id", me.id)]);
+    const blob = new Blob([JSON.stringify({ profile: p.data, body_metrics: m.data, activities: a.data, sets: l.data, messages: msg.data, food: fl.data, checkins: ck.data }, null, 2)], { type: "application/json" });
     const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = "my-training-data.json"; link.click();
   });
   $("#delReq")?.addEventListener("click", async () => {
@@ -987,10 +1018,21 @@ async function trainerClients() {
   }));
 }
 
+function checkinHistory(rows) {
+  const flag = (k, v) => (k === "soreness" ? v >= 4 : v <= 2);
+  return `<div class="card"><div class="row between"><h3>Check-ins</h3><span class="muted">Last 14 days</span></div>
+    ${rows.length ? `<div class="ck-table"><span></span>${CHECKIN.map((q) => `<span class="muted">${q.label}</span>`).join("")}
+      ${rows.map((r) => `<span>${fmtDate(r.checkin_date)}</span>${CHECKIN.map((q) => `<span class="${flag(q.key, r[q.key]) ? "chip warn" : ""}">${r[q.key] ?? "–"}</span>`).join("")}
+        ${r.note ? `<span class="ck-note">${esc(r.note)}</span>` : ""}`).join("")}</div>
+      <p class="muted" style="margin:10px 0 0">Highlighted: energy or sleep of 2 or less, soreness of 4 or more.</p>`
+      : `<p class="muted" style="margin:0">No check-ins yet. Clients see the check-in on their Today screen.</p>`}</div>`;
+}
+
 async function trainerClient(id) {
-  const [{ data: c }, { data: wos }] = await Promise.all([
+  const [{ data: c }, { data: wos }, { data: cks }] = await Promise.all([
     sb.from("profiles").select("*").eq("id", id).single(),
     sb.from("workouts").select("*, workout_items(count)").eq("client_id", id).order("created_at", { ascending: false }),
+    sb.from("checkins").select("*").eq("client_id", id).gte("checkin_date", new Date(Date.now() - 13 * 864e5).toISOString().slice(0, 10)).order("checkin_date", { ascending: false }),
   ]);
   if (!c) return render(`<div class="empty">Client not found.</div>`);
   const prog = await progressView(id, true);
@@ -1005,6 +1047,7 @@ async function trainerClient(id) {
       <p class="muted" style="margin:4px 0 0">A pass sets the plan and adds its days from today, or from the end of their current pass.</p>
       <button class="small" style="margin-top:10px">Update access</button>
       ${c.access_until && c.access_until < today() ? `<span class="chip warn">Expired ${fmtDate(c.access_until)}</span>` : ""}</form>
+    ${checkinHistory(cks || [])}
     <div class="card"><div class="row between"><h3>Workouts</h3><button class="small" onclick="location.hash='#/builder/${c.id}'">+ New workout</button></div>
       ${(wos || []).map((w) => `<a class="list-item" href="#/builder/${c.id}/${w.id}"><div class="grow"><b>${esc(w.name)}</b>
         <div class="muted">${w.workout_items?.[0]?.count || 0} exercises${w.scheduled_date ? ", " + fmtDate(w.scheduled_date) : ""}</div></div>
