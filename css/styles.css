@@ -295,3 +295,6 @@ ol.steps { padding-left: 20px; } ol.steps li { margin: 6px 0; }
 .ck-table .chip { margin: 0; justify-self: start; }
 .ck-note { grid-column: 1 / -1; font-size: .85rem; color: var(--muted); margin-top: -4px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
 .ck-summary .stat-label { display: block; }
+
+/* Bonus videos */
+.reward .avatar svg { width: 20px; height: 20px; }
