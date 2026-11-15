@@ -40,9 +40,9 @@ function seed() {
   ex("Deadbug", "Core", ["Yoga mat"], ["Low back pressed into the floor", "Move slowly, breathe out as you extend"], "Opposite arm and leg lower together.");
   ex("Kettlebell swing", "Full body", ["Kettlebell"], ["Hinge, don't squat", "Snap the hips", "Bell floats to chest height"], "Power comes from your hips, not your arms.");
   ex("Skater hops", "Cardio", [], ["Land softly on the ball of your foot", "Swing your arms for rhythm"], "Bound side to side.");
-  ex("World's greatest stretch", "Mobility", ["Yoga mat"], ["Long lunge, elbow to instep", "Rotate and reach to the ceiling", "Breathe into each position"], "Five slow reps a side.");
+  ex("World's greatest stretch", "Mobility", ["Yoga mat"], ["Long lunge, elbow to instep", "Rotate and reach to the ceiling", "Breathe into each position"], "Five slow reps a side.").reward_streak = 7;
   ex("Band pull-apart", "Shoulders", ["Resistance bands"], ["Arms straight, shoulders down", "Squeeze between your shoulder blades"], "Hold the band at shoulder height.");
-  ex("Bulgarian split squat", "Legs", ["Bench", "Dumbbells"], ["Most weight on the front leg", "Drop straight down", "Tall torso"], "Back foot on a bench.");
+  ex("Bulgarian split squat", "Legs", ["Bench", "Dumbbells"], ["Most weight on the front leg", "Drop straight down", "Tall torso"], "Back foot on a bench.").reward_streak = 30;
 
   // Past sessions: progressive weights, so personal bests show up.
   const pastPlans = [
@@ -128,7 +128,7 @@ class Query {
   constructor(table) { this.t = table; this.f = []; this.op = "select"; this.sel = "*"; this.ret = false; }
   select(sel = "*", opts = {}) { if (this.op === "select") this.sel = sel; else this.ret = true; this.count = opts.count; this.head = opts.head; return this; }
   insert(rows) { this.op = "insert"; this.rows = [].concat(rows); return this; }
-  upsert(rows, opts = {}) { this.op = "upsert"; this.rows = [].concat(rows); this.conflict = opts.onConflict; return this; }
+  upsert(rows, opts = {}) { this.op = "upsert"; this.rows = [].concat(rows); this.conflict = opts.onConflict; this.skipDup = opts.ignoreDuplicates; return this; }
   update(vals) { this.op = "update"; this.vals = vals; return this; }
   delete() { this.op = "delete"; return this; }
   eq(c, v) { this.f.push((r) => r[c] === v); return this; }
@@ -149,7 +149,7 @@ class Query {
       out = this.rows.map((row) => {
         const keys = this.conflict ? this.conflict.split(",") : ["id"];
         const existing = this.op === "upsert" && T.find((r) => keys.every((k) => row[k] !== undefined && r[k] === row[k]));
-        if (existing) return Object.assign(existing, row);
+        if (existing) return this.skipDup ? existing : Object.assign(existing, row);
         if (this.t === "challenge_completions" && T.some((r) => r.client_id === row.client_id && r.challenge_date === (row.challenge_date || localIso(new Date()))))
           throw { message: "Already done today" };
         const full = { id: uid(), ...(DEFAULTS[this.t]?.() || {}), ...row }; T.push(full); return full;
@@ -184,6 +184,9 @@ export function createDemoClient() {
   const emit = (ev) => listeners.forEach((cb) => cb(ev, session));
   return {
     from: (t) => new Query(t),
+    rpc: async (name) => name === "reward_milestones"
+      ? { data: [...new Set(db.exercises.filter((e) => e.reward_streak).map((e) => e.reward_streak))].sort((a, b) => a - b), error: null }
+      : { data: null, error: { message: "Not available in the demo" } },
     auth: {
       onAuthStateChange(cb) { listeners.push(cb); setTimeout(() => cb("INITIAL_SESSION", session), 0); return { data: { subscription: { unsubscribe() {} } } }; },
       async getSession() { return { data: { session } }; },

@@ -1,6 +1,6 @@
 import { CONFIG, BRAND } from "./config.js";
 import { FOODS, WEEKLY_BUFFER, RECIPES, calcPoints, dailyBudget } from "./nutrition.js";
-import { CHALLENGES, TIPS, BADGES, badgeStats, medal, pickForDate } from "./engage.js";
+import { CHALLENGES, TIPS, BADGES, badgeStats, medal, pickForDate, ROULETTE_UNLOCK_DAYS } from "./engage.js";
 
 // ---------------------------------------------------------------- setup
 const SUPABASE_ESM = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
@@ -39,6 +39,7 @@ const SWAP_HINTS = {
 let session = null;
 let me = null;
 let myTrainer = null;
+let visitLogged = null;
 let chatChannel = null;
 let charts = [];
 
@@ -300,6 +301,10 @@ async function route() {
   if (!me) { await loadMe(); if (!me) return render(`<div class="empty">Setting up your profile… refresh in a moment.</div>`); }
 
   const [page, a, b] = location.hash.replace(/^#\/?/, "").split("/");
+  if (me.role === "client" && me.trainer_id && visitLogged !== today()) {
+    visitLogged = today();
+    await sb.from("checkins").upsert({ client_id: me.id, checkin_date: today() }, { onConflict: "client_id,checkin_date", ignoreDuplicates: true });
+  }
   const unread = await unreadCount();
   const badge = unread > 0;
 
@@ -374,7 +379,7 @@ function checkinCard(done) {
   if (done) return `<div class="card checkin done"><div class="row between"><h3>Today's check-in</h3><button class="small secondary" id="ckEdit">Edit</button></div>
     <div class="ck-summary">${CHECKIN.map((q) => `<div><span class="stat">${done[q.key] ?? "–"}</span><span class="stat-label">${q.label}</span></div>`).join("")}</div>
     ${done.note ? `<p class="muted" style="margin:10px 0 0">${esc(done.note)}</p>` : ""}</div>`;
-  return `<form class="card checkin" id="ckForm"><h3>How are you today?</h3><p class="muted" style="margin:0 0 4px">Three taps. Your coach uses this to adjust your training.</p>
+  return `<form class="card checkin" id="ckForm"><h3>How are you today?</h3><p class="muted" style="margin:0 0 4px">Optional. Opening the app already counts towards your streak; three taps here help your coach adjust your training.</p>
     ${CHECKIN.map((q) => `<fieldset class="ck-q"><legend>${q.label}</legend><div class="ck-scale">${[1, 2, 3, 4, 5].map((n) =>
       `<label><input type="radio" name="${q.key}" value="${n}" required><span>${n}</span></label>`).join("")}</div>
       <div class="ck-ends"><span>${q.low}</span><span>${q.high}</span></div></fieldset>`).join("")}
@@ -393,9 +398,26 @@ function bindCheckin(after) {
   });
 }
 
+function celebrateRewards(unlocked) {
+  const key = "or-rewards-" + me.id; let seen = null;
+  try { seen = JSON.parse(localStorage.getItem(key)); } catch {}
+  try { localStorage.setItem(key, JSON.stringify(unlocked.map((x) => x.id))); } catch {}
+  if (!seen) return;
+  const fresh = unlocked.find((x) => !seen.includes(x.id));
+  if (!fresh || $("#cel")) return;
+  document.body.insertAdjacentHTML("beforeend", `<div class="celebrate" id="cel" role="dialog" aria-label="Bonus video unlocked"><div class="box">
+    ${medal({ glyph: String(fresh.reward_streak) }, true, 140)}<h2>Bonus video unlocked</h2>
+    <p class="muted">Your ${fresh.reward_streak}-day streak earned you <b>${esc(fresh.name)}</b>.</p>
+    <button class="block" id="celGo">Watch it now</button><button class="block secondary" id="celOk" style="margin-top:8px">Later</button></div></div>`);
+  $("#celGo").onclick = () => { $("#cel").remove(); go("ex/" + fresh.id); };
+  $("#celOk").onclick = () => $("#cel").remove();
+}
+
 async function clientHome() {
-  const [eng, { data: wos }] = await Promise.all([
+  const [eng, { data: milestones }, { data: rewardRows }, { data: wos }] = await Promise.all([
     loadEngagement(),
+    sb.rpc("reward_milestones"),
+    sb.from("exercises").select("id, name, reward_streak").not("reward_streak", "is", null).order("reward_streak"),
     sb.from("workouts").select("*").eq("client_id", me.id).is("completed_at", null).order("scheduled_date", { nullsFirst: false }).limit(3),
   ]);
   const food = tracksNut() ? await foodSummary() : null;
@@ -417,24 +439,35 @@ async function clientHome() {
   const tip = pickForDate(TIPS, today(), 5);
   const nextBadge = BADGES.find((b) => !eng.earned.includes(b));
   const strip = [...eng.earned.slice(-3).reverse(), ...(nextBadge ? [nextBadge] : [])];
+  const activeTotal = new Set(activeDays).size;
+  const rouletteOpen = activeTotal >= ROULETTE_UNLOCK_DAYS;
+  const rewards = (rewardRows || []).filter((x) => st.best >= x.reward_streak);
+  const nextReward = (milestones || []).find((m) => m > st.best);
+  const rewardCard = (milestones || []).length ? `<div class="card reward">
+      <div class="row between"><h3>Bonus videos</h3><span class="muted">Best streak ${st.best} ${st.best === 1 ? "day" : "days"}</span></div>
+      ${rewards.map((x) => `<a class="list-item" href="#/ex/${x.id}"><span class="avatar">${ICON.library}</span><div class="grow"><b>${esc(x.name)}</b><div class="muted">Unlocked at a ${x.reward_streak}-day streak</div></div></a>`).join("")}
+      ${nextReward ? `<p class="${rewards.length ? "muted" : ""}" style="margin:${rewards.length ? "10px" : "6px"} 0 8px">Next bonus video unlocks at a <b>${nextReward}-day streak</b>. ${nextReward - st.current} ${nextReward - st.current === 1 ? "day" : "days"} to go if you keep it going.</p>
+        <div class="progress"><div style="width:${Math.min(100, (st.current / nextReward) * 100)}%"></div></div>` : `<p class="muted" style="margin:8px 0 0">You've unlocked every bonus video.</p>`}
+    </div>` : "";
 
   const heroBlock = tracksEx()
     ? heroHtml({ photo: CONFIG.PHOTOS.today, tag: next ? (next.scheduled_date && next.scheduled_date !== today() ? fmtDate(next.scheduled_date) : "Today") : "Rest day",
         title: next ? next.name : `Recover well, ${first}`,
-        sub: next ? (next.notes || "Your coach set this one for you.") : "Nothing scheduled. Try the daily challenge or spin the roulette.",
+        sub: next ? (next.notes || "Your coach set this one for you.") : rouletteOpen ? "Nothing scheduled. Try the daily challenge or spin the roulette." : "Nothing scheduled. Try today's challenge or log a walk with +.",
         actions: next ? `<button onclick="location.hash='#/workout/${next.id}'">Start workout</button><button class="ghost" onclick="location.hash='#/workouts'">Weekly plan</button>`
-          : `<button onclick="location.hash='#/roulette'">${ICON.dice} Spin the roulette</button>` })
+          : rouletteOpen ? `<button onclick="location.hash='#/roulette'">${ICON.dice} Spin the roulette</button>` : "" })
     : heroHtml({ photo: CONFIG.PHOTOS.today, tag: "Today", title: `Morning, ${first}`, sub: "Log your meals and movement as you go." });
 
   render(`${heroBlock}
     <nav class="chips" aria-label="Shortcuts">
       <a href="#/badges" class="streak">${ICON.flame} ${st.current ? `${st.current}-day streak` : "Start a streak today"}</a>
       ${left ? `<span class="pass">${ICON.ticket} ${left} ${left === 1 ? "day" : "days"} left on your pass</span>` : hasPasses ? `<a href="#/passes">${ICON.ticket} Get a pass</a>` : ""}
-      <a href="#/roulette">${ICON.dice} Roulette</a>
+      <a href="#/roulette">${ICON.dice} ${rouletteOpen ? "Roulette" : `Roulette unlocks in ${ROULETTE_UNLOCK_DAYS - activeTotal} days`}</a>
       <a href="#/progress">${ICON.progress} Progress</a>
       ${CONFIG.INSTAGRAM_URL ? `<a href="${esc(CONFIG.INSTAGRAM_URL)}" target="_blank" rel="noopener">${ICON.ig} Instagram</a>` : ""}
     </nav>
-    ${checkinCard(eng.checkins.find((c) => c.checkin_date === today()))}
+    ${rewardCard}
+    ${checkinCard(eng.checkins.find((c) => c.checkin_date === today() && c.energy != null))}
     <div class="card"><p class="muted" style="margin:0 0 6px">Today's challenge</p>
       <div class="challenge"><span class="q">${esc(challenge)}</span>
       ${chDone ? `<button class="small done" disabled>Done</button>` : `<button class="small" id="chDone">Done it</button>`}</div></div>
@@ -456,6 +489,7 @@ async function clientHome() {
     </div>
     <div class="card tip"><p class="muted" style="margin:0 0 4px">Coach's tip</p><p style="margin:0">${esc(tip)}</p></div>`);
   bindCheckin(clientHome);
+  celebrateRewards(rewards);
   $("#chDone")?.addEventListener("click", async () => {
     const { error } = await sb.from("challenge_completions").insert({ client_id: me.id, challenge_date: today(), challenge });
     if (!fail(error)) { toast("Challenge done. That counts towards your streak."); clientHome(); }
@@ -470,15 +504,23 @@ async function badgesView() {
       <div class="card"><div class="stat">${st.current}</div><div class="stat-label">Day streak</div></div>
       <div class="card"><div class="stat">${st.best}</div><div class="stat-label">Best streak</div></div>
       <div class="card"><div class="stat">${eng.earned.length}</div><div class="stat-label">of ${BADGES.length} badges</div></div></div>
-    <p class="muted">${st.today ? "You've shown up today. Same again tomorrow keeps the streak alive." : st.current ? "Do anything today — a set, a walk or the daily challenge — to keep your streak." : "Any set, activity or daily challenge starts a streak."}</p>
+    <p class="muted">${st.today ? "You've shown up today. Open the app again tomorrow to keep the streak alive." : "Open the app each day to keep your streak going."}</p>
     <div class="card"><div class="badges">${BADGES.map((b) => { const got = eng.earned.includes(b);
       return `<div class="badge ${got ? "" : "locked"}">${medal(b, got, 68)}<b>${esc(b.title)}</b><span>${esc(b.desc)}</span></div>`; }).join("")}</div></div>`);
   celebrate(eng.earned);
 }
 
 async function rouletteView() {
-  const { data } = await sb.from("exercises").select("*").order("name");
-  const pool = data || [];
+  const [eng, { data }] = await Promise.all([loadEngagement(), sb.from("exercises").select("*").order("name")]);
+  const activeTotal = new Set(eng.activeDays).size;
+  if (activeTotal < ROULETTE_UNLOCK_DAYS) {
+    return render(`<button class="back" onclick="history.back()">Back</button>
+      ${heroHtml({ tag: "Locked", title: "Exercise roulette", sub: `A random move from your coach's library, for days you want something different. It unlocks after ${ROULETTE_UNLOCK_DAYS} active days. Any day you open the app counts, and gaps are fine.` })}
+      <div class="card"><div class="row between"><span><b class="stat" style="font-size:1.5rem">${activeTotal}</b> <span class="muted">of ${ROULETTE_UNLOCK_DAYS} active days</span></span><span class="muted">${ROULETTE_UNLOCK_DAYS - activeTotal} to go</span></div>
+        <div class="progress" style="margin-top:10px"><div style="width:${(activeTotal / ROULETTE_UNLOCK_DAYS) * 100}%"></div></div></div>`);
+  }
+  const best = eng.stats.streak.best;
+  const pool = (data || []).filter((x) => x.reward_streak == null || best >= x.reward_streak);
   const groups = [...new Set(pool.map((x) => x.muscle_group))];
   render(`<button class="back" onclick="history.back()">Back</button>
     <h1>Exercise roulette</h1><p class="muted">In the mood for something new? Spin for a move from your coach's library.</p>
@@ -682,16 +724,22 @@ function tileHtml(x, urls, href) {
     <b>${esc(x.name)}</b><span>${esc(x.muscle_group)}${missingEquipment(x, me.equipment).length ? ", needs kit" : ""}</span></a>`;
 }
 async function clientLibrary() {
-  const { data } = await sb.from("exercises").select("*").order("name");
-  const all = data || []; const urls = await signedMap(all);
+  const [{ data }, eng] = await Promise.all([sb.from("exercises").select("*").order("name"), loadEngagement()]);
+  const best = eng.stats.streak.best;
+  const bonus = (data || []).filter((x) => x.reward_streak != null && best >= x.reward_streak);
+  const all = (data || []).filter((x) => x.reward_streak == null); const urls = await signedMap([...all, ...bonus]);
+  const bonusHtml = bonus.length ? `<div class="sec"><h2>Bonus videos</h2><span class="muted">Earned with your streak</span></div>
+    <div class="tiles" style="margin-bottom:6px">${bonus.map((x) => tileHtml(x, urls, `#/ex/${x.id}`)).join("")}</div>` : "";
   if (!hasLibrary()) {
     render(`${heroHtml({ photo: CONFIG.PHOTOS.passes, tag: "Library", title: "Every move, on demand",
         sub: "Get a pass to unlock all of your coach's demos and form cues. The exercises in your own workouts stay open." ,
         actions: `<button onclick="location.hash='#/passes'">See passes</button>` })}
+      ${bonusHtml}
       ${all.length ? `<div class="sec"><h2>In your workouts</h2></div><div class="tiles">${all.map((x) => tileHtml(x, urls, `#/ex/${x.id}`)).join("")}</div>` : ""}`);
     return;
   }
   render(`<h1>Library</h1><p class="muted">Demos and form cues from your coach, for extra sessions or a refresher.</p>
+    ${bonusHtml}
     <input id="q" placeholder="Search exercises" style="margin-bottom:10px" aria-label="Search exercises">
     <div class="chips" id="mg">${["All", "Fits my kit", ...MUSCLES].map((m, i) => `<a href="#" class="${i ? "" : "pass"}" data-m="${m}">${m}</a>`).join("")}</div>
     <div class="tiles" id="list"></div>`);
@@ -1047,7 +1095,7 @@ async function trainerClient(id) {
       <p class="muted" style="margin:4px 0 0">A pass sets the plan and adds its days from today, or from the end of their current pass.</p>
       <button class="small" style="margin-top:10px">Update access</button>
       ${c.access_until && c.access_until < today() ? `<span class="chip warn">Expired ${fmtDate(c.access_until)}</span>` : ""}</form>
-    ${checkinHistory(cks || [])}
+    ${checkinHistory((cks || []).filter((r) => r.energy != null))}
     <div class="card"><div class="row between"><h3>Workouts</h3><button class="small" onclick="location.hash='#/builder/${c.id}'">+ New workout</button></div>
       ${(wos || []).map((w) => `<a class="list-item" href="#/builder/${c.id}/${w.id}"><div class="grow"><b>${esc(w.name)}</b>
         <div class="muted">${w.workout_items?.[0]?.count || 0} exercises${w.scheduled_date ? ", " + fmtDate(w.scheduled_date) : ""}</div></div>
@@ -1145,7 +1193,7 @@ async function trainerLibrary() {
   const { data } = await sb.from("exercises").select("*").eq("trainer_id", me.id).order("name");
   const all = data || [];
   render(`<div class="row between"><h1>Library</h1><button class="small" onclick="location.hash='#/exercise/new'">+ Exercise</button></div>
-    <p class="muted">Every exercise you add is saved here and reusable for any client.</p>
+    <p class="muted">Every exercise you add is saved here and reusable for any client. Mark some as bonus videos to reward 7, 14 and 30-day streaks.</p>
     <input id="q" placeholder="Search exercises…" style="margin-bottom:8px">
     <div id="mg">${["All", ...MUSCLES].map((m, i) => `<span class="chip ${i ? "" : "on"}" data-m="${m}" role="button">${m}</span>`).join("")}</div>
     <div class="card" id="list" style="margin-top:10px"></div>`);
@@ -1155,7 +1203,7 @@ async function trainerLibrary() {
     const rows = all.filter((x) => (mg === "All" || x.muscle_group === mg) && x.name.toLowerCase().includes(q));
     $("#list").innerHTML = rows.map((x) => `<a class="list-item" href="#/exercise/${x.id}"><div class="grow"><b>${esc(x.name)}</b>
       <div class="muted">${esc(x.muscle_group)}, ${(x.equipment || []).map(esc).join(", ") || "Bodyweight"}</div></div>
-      ${x.video_path ? "Video" : `<span class="chip warn">No video</span>`} ${x.cues?.length ? "" : `<span class="chip warn">No cues</span>`}</a>`).join("")
+      ${x.reward_streak ? `<span class="chip good">Bonus ${x.reward_streak}d</span>` : ""} ${x.video_path ? "Video" : `<span class="chip warn">No video</span>`} ${x.cues?.length ? "" : `<span class="chip warn">No cues</span>`}</a>`).join("")
       || `<div class="empty">${all.length ? "No matches." : "Start your library — add your first exercise."}</div>`;
   };
   $("#q").oninput = draw;
@@ -1176,6 +1224,10 @@ async function exerciseEditor(id) {
       <label>Muscle group</label><select name="mg">${MUSCLES.map((m) => `<option ${m === ex.muscle_group ? "selected" : ""}>${m}</option>`).join("")}</select>
       <label>Equipment needed <span class="muted">(none = bodyweight)</span></label>
       <div id="eq">${EQUIPMENT.filter((e) => e !== "Full gym").map((e) => `<span class="chip ${ex.equipment.includes(e) ? "on" : ""}" data-e="${esc(e)}" role="button">${esc(e)}</span>`).join("")}</div>
+      <label for="rw">Bonus video for streaks</label>
+      <select name="rw" id="rw">${[["", "No, part of the normal library"], ["7", "Unlocks at a 7-day streak"], ["14", "Unlocks at a 14-day streak"], ["30", "Unlocks at a 30-day streak"]]
+        .map(([v, l]) => `<option value="${v}" ${String(ex.reward_streak ?? "") === v ? "selected" : ""}>${l}</option>`).join("")}</select>
+      <p class="muted">Bonus videos are free rewards. Clients can't see them until their streak gets there.</p>
       <label>Demo video</label>
       ${url ? `<video src="${esc(url)}" controls playsinline style="width:100%;border-radius:10px;max-height:260px"></video>` : ""}
       <input type="file" name="video" accept="video/*">
@@ -1220,7 +1272,8 @@ async function exerciseEditor(id) {
       video_path = path;
     }
     const row = { trainer_id: me.id, name: f.name.value.trim(), muscle_group: f.mg.value, equipment: $$("#eq .chip.on").map((c) => c.dataset.e),
-      instructions: f.ins.value || null, cues: f.cues.value.split("\n").map((s) => s.trim()).filter(Boolean), video_path };
+      instructions: f.ins.value || null, cues: f.cues.value.split("\n").map((s) => s.trim()).filter(Boolean), video_path,
+      reward_streak: f.rw.value ? Number(f.rw.value) : null };
     const { error } = isNew ? await sb.from("exercises").insert(row) : await sb.from("exercises").update(row).eq("id", id);
     btn.disabled = false; btn.textContent = "Save to library";
     if (!fail(error)) { toast("Saved to library"); go("library"); }

@@ -3,6 +3,9 @@
 // She can edit CHALLENGES and TIPS freely — one line each.
 // =============================================================
 
+// Exercise roulette opens after this many active days (any day they open the app counts).
+export const ROULETTE_UNLOCK_DAYS = 90;
+
 // One small win a day. The app picks today's from this list (same for every client).
 export const CHALLENGES = [
   "Hold a plank for 45 seconds",
