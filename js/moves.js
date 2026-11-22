@@ -11,6 +11,7 @@ import { MUSCLES } from "./muscles.js";
 const K = 0.78;
 const L = { torso: 50 * K, neck: 7 * K, head: 8.5 * K, uarm: 27 * K, farm: 25 * K, thigh: 39 * K, shin: 38 * K, foot: 11 * K };
 const W = 200, H = 162, GROUND = 150, HEAD_R = 8.4;
+export { GROUND };
 
 const STAND = { torso: 90, head: 90, ua: [266, 270], fa: [268, 272], th: [270, 270], sh: [270, 270], ft: [0, 0] };
 const P = (o) => ({ ...STAND, ...o });
@@ -329,7 +330,8 @@ const KEYWORDS = [
   [/pigeon/i, "pigeon"], [/90.90/i, "hip9090"], [/arm circle/i, "armcircles"], [/leg swing/i, "legswing"], [/ankle/i, "ankle"], [/single.leg stand|balance/i, "slstand"],
   [/stretch|greatest|reach|mobility/i, "stretch"],
 ];
-for (const k in MOVES) MOVES[k].key = k;
+Object.keys(MOVES).forEach((k, i) => { MOVES[k].key = k; MOVES[k].top = i % 2 ? "beige" : "sage"; });
+export const TOP_COLOURS = { sage: { top: "#9CB59A", far: "#7E987C", ink: "#F1E9DA" }, beige: { top: "#E4D6BC", far: "#C2B49A", ink: "#56735A" } };
 export function moveFor(ex) {
   if (ex?.demo_move === "none") return null;
   if (ex?.demo_move && MOVES[ex.demo_move]) return ex.demo_move;
@@ -368,7 +370,7 @@ const DEF = { tl: 1, al: 1, ll: 1, lift: 0, tb: 0, dx: 0, rp: 0 };
 
 // Joint positions in figure space (y up), hip at the origin.
 // Side view: both legs share the hip. Front view: hips and shoulders sit apart.
-function joints(pose, front) {
+export function joints(pose, front) {
   const tl = pose.tl ?? 1, al = pose.al ?? 1, ll = pose.ll ?? 1;
   const hip = [0, 0];
   const sh = step(hip, pose.torso, L.torso * tl);
@@ -391,7 +393,7 @@ function pinPoint(j, name) {
 }
 function allPts(j) { return [j.hip, j.sh, ...j.legs.flatMap((l) => [l.k, l.a, l.t]), ...j.arms.flatMap((a) => [a.e, a.h]), [j.head[0], j.head[1] - HEAD_R * 0.9]]; }
 // Offsets that turn figure space into SVG space: the pin keeps its x; the lowest point sits on the ground (or the pin sits at pinY).
-function place(move, j, pose) {
+export function place(move, j, pose) {
   const pin = pinPoint(j, move.pin);
   const pinX = move.x ?? (move.pin === "toe" ? 50 : move.pin === "hip" ? 92 : move.view === "front" ? 100 : 104);
   const dx = pinX - pin[0] + (pose.dx || 0);
@@ -437,7 +439,7 @@ const PROF = {
   torsoF: [[0, 10.2, 10.2], [0.35, 7.8, 7.8], [0.72, 10.4, 10.4], [0.9, 12.4, 12.4], [1, 9, 9]],
 };
 // Where each muscle sits on the moving figure: segment, side (f front, b back, x both), from, to
-const ZONES = {
+export const ZONES = {
   quads: [["thigh", "f", 0.08, 0.92]], hamstrings: [["thigh", "b", 0.1, 0.9]], glutes: [["torso", "b", 0, 0.24], ["thigh", "b", 0, 0.22]],
   hipflexors: [["thigh", "f", 0, 0.3], ["torso", "f", 0, 0.12]], abductors: [["thigh", "x", 0, 0.28]], adductors: [["thigh", "b", 0.05, 0.6]],
   calves: [["shin", "b", 0.08, 0.66]], shins: [["shin", "f", 0.1, 0.85]],
@@ -557,9 +559,9 @@ function drawPose(svg, move, pose) {
 }
 
 // Public: markup for a demo. Animated ones are picked up by startMoves().
-export function moveSvg(key, { animate = true, label = true, props = true } = {}) {
+export function moveSvg(key, { animate = true, label = true, props = true, big = false } = {}) {
   const m = MOVES[key]; if (!m) return "";
-  return `<figure class="move ${animate ? "anim" : ""} ${m.view === "front" ? "front" : ""}" data-move="${key}" data-props="${props ? 1 : 0}">
+  return `<figure class="move ${animate ? "anim" : ""} ${m.view === "front" ? "front" : ""} ${big ? "big" : ""}" data-move="${key}" data-props="${props ? 1 : 0}" style="--top:${TOP_COLOURS[m.top].top}">
     <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${m.label} demonstration">
       <circle class="m-ring" cx="${W - 34}" cy="40" r="46"/>
       <line class="m-ground" x1="14" y1="${GROUND + 1.5}" x2="${W - 14}" y2="${GROUND + 1.5}"/>
@@ -601,6 +603,7 @@ export function startMoves(root = document) {
     drawPose(f.querySelector("svg"), m, poseAt(m, anim ? 0 : m.still ?? 0.5));
     if (anim) live.add(f);
   });
+  upgrade3d(root);
   if (running || !live.size) return;
   running = true; t0 = performance.now();
   const tick = (now) => {
@@ -614,3 +617,22 @@ export function startMoves(root = document) {
 
 // For tests and previews: draw a fixed point in the cycle (0 = start pose, 0.5 = end pose).
 export function drawAt(fig, t) { const m = MOVES[fig.dataset.move]; drawPose(fig.querySelector("svg"), m, poseAt(m, t)); }
+
+// Large demos (session, exercise page, roulette, editor) upgrade to the 3D figure when the phone supports it.
+// The 2D drawing shows first and stays as the fallback.
+let fig3d = null;
+function upgrade3d(root) {
+  const figs = [...root.querySelectorAll(".move.big:not(.has3d)")]; if (!figs.length) return;
+  fig3d ||= import("./fig3d.js").catch(() => null);
+  fig3d.then((m) => {
+    if (!m || !m.supported()) return;
+    figs.forEach((f) => {
+      if (!f.isConnected || f.classList.contains("has3d")) return;
+      f._stop3d?.(); f.classList.add("has3d");
+      const host = document.createElement("div"); host.className = "m3d-host"; f.insertBefore(host, f.firstChild);
+      try { f._stop3d = m.mount(host, f.dataset.move, { props: f.dataset.props !== "0" }); live.delete(f); }
+      catch (e) { f.classList.remove("has3d"); host.remove(); }
+      const cap = f.querySelector("figcaption"); if (cap) cap.textContent = "Drag sideways to turn her round. Your coach's video replaces this demo.";
+    });
+  });
+}

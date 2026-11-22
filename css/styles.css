@@ -675,3 +675,10 @@ details.qa form { margin-top: 6px; }
 .inote textarea { min-height: 64px; }
 .client-said { background: rgba(240,122,85,.1); border-left: 3px solid #F07A55; padding: 6px 10px; border-radius: 6px; margin: 8px 0; }
 .sess .mmap { margin-top: 4px; }
+
+/* 3D demos (v19) */
+.move { --legs: #1F2023; --legs-far: #2C2E32; }
+.move.big .m3d-host { position: relative; width: 100%; aspect-ratio: 5 / 4; max-height: 380px; }
+.move.big .m3d-host canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; }
+.move.big.has3d > svg { display: none; }
+.move.big { background: radial-gradient(120% 90% at 50% 28%, #2A322C, #161A17); }

@@ -1254,7 +1254,7 @@ function demoHtml(ex, url, opts = {}) {
   if (url) return `<video src="${esc(url)}" controls playsinline preload="metadata" loop muted></video>`;
   if (ex.video_url) return linkHtml(ex.video_url, `${ex.name} demo`);
   const mv = moveFor(ex);
-  return mv ? moveSvg(mv, { props: (ex.equipment || []).length > 0, ...opts }) : "";
+  return mv ? moveSvg(mv, { props: (ex.equipment || []).length > 0, big: true, ...opts }) : "";
 }
 // Body map of the muscles this exercise works (coach's own picks first, then the animation's, then the muscle group).
 function musclesHtml(ex, opts = {}) { const m = musclesFor(ex, moveFor(ex)); return m[0].length ? muscleMapSvg(m, opts) : ""; }
@@ -2507,7 +2507,7 @@ async function exerciseEditor(id) {
   $("#tyNew").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("#tyAdd").click(); } });
   const preview = () => {
     const f = $("#ef"); const mv = moveFor({ name: f.name.value, demo_move: f.dm.value || null });
-    $("#dmPrev").innerHTML = mv ? moveSvg(mv, { label: false, props: $$("#eq .chip.on").length > 0 }) + `<p class="muted" style="margin:6px 0 0">${esc(MOVES[mv].label)}${f.dm.value ? "" : ", matched from the name"}</p>`
+    $("#dmPrev").innerHTML = mv ? moveSvg(mv, { label: false, big: true, props: $$("#eq .chip.on").length > 0 }) + `<p class="muted" style="margin:6px 0 0">${esc(MOVES[mv].label)}${f.dm.value ? "" : ", matched from the name"}</p>`
       : `<p class="muted" style="margin:0">No animation. Choose one above, or upload a video.</p>`;
     startMoves($("#dmPrev"));
     const picked = $$("#mu .chip.on").map((c) => c.dataset.m);
