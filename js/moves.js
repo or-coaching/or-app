@@ -48,7 +48,7 @@ export const MOVES = {
   wallsit: { label: "Wall sit", pin: "ankle", secs: 3, scene: [{ type: "wall", at: "sh", dx: -12 }],
     frames: [P({ torso: 92, th: [2, 2], sh: [270, 270], ua: [272, 272], fa: [300, 300] }), P({ torso: 92, head: 96, th: [2, 2], sh: [270, 270], ua: [272, 272], fa: [300, 300] })] },
   jumpsquat: { label: "Jump squat", pin: "ankle", secs: 1.4,
-    frames: [P({ torso: 60, head: 72, ua: [250, 250], fa: [250, 250], th: [352, 350], sh: [248, 250] }), P({ ua: [80, 84], fa: [84, 88], ft: [300, 300], lift: 16 })] },
+    frames: [P({ torso: 60, head: 72, ua: [250, 250], fa: [250, 250], th: [352, 350], sh: [248, 250] }), P({ ua: [58, 62], fa: [64, 68], ft: [300, 300], lift: 9 })] },
   thruster: { label: "Dumbbell thruster", pin: "ankle", prop: "dumbbells", secs: 2.6,
     frames: [P({ torso: 60, head: 72, ua: [215, 215], fa: [70, 70], th: [352, 350], sh: [248, 250] }), P({ ua: [88, 92], fa: [88, 92] })] },
   hinge: { label: "Hip hinge", pin: "ankle", prop: "dumbbells", secs: 3.4,
@@ -114,7 +114,7 @@ export const MOVES = {
     frames: [Q({}), Q({ ua: [0, 270], fa: [0, 270], th: [270, 180], sh: [180, 180], ft: [180, 180] })] },
   catcow: { label: "Cat-cow", mat: true, pin: "hand", x: 140, secs: 4,
     frames: [Q({ tb: 9, head: 300 }), Q({ tb: -7, head: 30 })] },
-  thread: { label: "Thread the needle", mat: true, pin: "hand1", x: 140, secs: 4,
+  thread: { free: true, label: "Thread the needle", mat: true, pin: "hand1", x: 140, secs: 4,
     frames: [Q({ ua: [80, 270], fa: [86, 270] }), Q({ torso: 352, head: 330, ua: [196, 270], fa: [186, 270], tb: 3 })] },
   child: { label: "Child's pose", mat: true, pin: "hand", x: 150, secs: 4.4,
     frames: [Q({ ua: [8, 8], fa: [0, 0], head: 0 }), P({ torso: 356, head: 340, th: [300, 300], sh: [180, 180], ft: [180, 180], ua: [4, 4], fa: [0, 0] })] },
@@ -135,7 +135,7 @@ export const MOVES = {
   downdog: { label: "Downward dog", mat: true, pin: "toe", x: 40, secs: 4,
     frames: [P({ torso: 304, head: 300, th: [236, 236], sh: [236, 236], ft: [326, 326], ua: [270, 270], fa: [270, 270] }), P({ torso: 306, head: 296, th: [238, 238], sh: [238, 238], ft: [342, 342], ua: [268, 268], fa: [268, 268] })] },
   plank: { label: "Plank shoulder tap", mat: true, pin: "toe", secs: 2.6,
-    frames: [PL({}), PL({ ua: [272, 30], fa: [272, 120] })] },
+    frames: [PL({}), PL({ ua: [272, 238], fa: [272, 52] })] },
   plankhold: { label: "Plank", mat: true, pin: "toe", secs: 3.6, still: 0,
     frames: [PL({ ua: [270, 270], fa: [0, 0] }), PL({ ua: [270, 270], fa: [0, 0], torso: 11, th: [191, 191] })] },
   sideplank: { label: "Side plank", view: "front", mat: true, pin: "toe", x: 40, secs: 3,
@@ -145,9 +145,9 @@ export const MOVES = {
   renegade: { label: "Renegade row", mat: true, pin: "toe", prop: "dumbbells", secs: 2.6,
     frames: [PL({}), PL({ ua: [128, 272], fa: [268, 272] })] },
   press: { label: "Overhead press", pin: "ankle", prop: "dumbbells", secs: 2.6,
-    frames: [P({ ua: [252, 256], fa: [86, 88] }), P({ ua: [94, 94], fa: [92, 92] })] },
+    frames: [P({ ua: [288, 290], fa: [96, 98] }), P({ ua: [94, 94], fa: [92, 92] })] },
   seatpress: { label: "Seated shoulder press", pin: "hip", pinY: GROUND - 40, prop: "dumbbells", secs: 2.6, scene: [benchAtHip()],
-    frames: [SE({ ua: [252, 256], fa: [86, 88] }), SE({ ua: [94, 94], fa: [92, 92] })] },
+    frames: [SE({ ua: [288, 290], fa: [96, 98] }), SE({ ua: [94, 94], fa: [92, 92] })] },
   reach: { label: "Overhead reach", pin: "ankle", secs: 3.6,
     frames: [P({}), P({ ua: [88, 92], fa: [90, 94], head: 94 })] },
   latraise: { label: "Lateral raise", view: "front", pin: "feet", prop: "dumbbells", secs: 2.6,
@@ -159,21 +159,21 @@ export const MOVES = {
   pullapart: { label: "Band pull-apart", view: "front", pin: "feet", secs: 2.6, lines: [{ type: "band", from: "hand", to: "hand1" }],
     frames: [F({ al: 0.42, ua: [330, 210], fa: [350, 190] }), F({ ua: [2, 178], fa: [0, 180] })] },
   facepull: { label: "Face pull", pin: "ankle", secs: 2.6, lines: [{ type: "cable", from: "hand", at: "sh", dx: 74, dy: -6 }], scene: [{ type: "anchor", at: "sh", dx: 74, dy: -6 }],
-    frames: [P({ ua: [4, 4], fa: [4, 4] }), P({ ua: [168, 168], fa: [64, 64] })] },
+    free: true, frames: [P({ ua: [4, 4], fa: [4, 4] }), P({ ua: [40, 40], fa: [96, 96], al: 0.55 }), P({ ua: [150, 150], fa: [76, 76], al: 0.85 })] },
   pushdown: { label: "Triceps pushdown", pin: "ankle", secs: 2.4, lines: [{ type: "cable", from: "hand", at: "sh", dx: 30, dy: -56 }], scene: [{ type: "anchor", at: "sh", dx: 30, dy: -56 }],
     frames: [P({ torso: 86, ua: [276, 276], fa: [40, 40] }), P({ torso: 86, ua: [276, 276], fa: [282, 282] })] },
   ohext: { label: "Overhead triceps extension", pin: "ankle", prop: "db1", secs: 2.6,
     frames: [P({ ua: [92, 96], fa: [92, 96] }), P({ ua: [98, 102], fa: [238, 242] })] },
   curl: { label: "Biceps curl", pin: "ankle", prop: "dumbbells", secs: 2.4,
-    frames: [P({ ua: [268, 270], fa: [268, 270] }), P({ ua: [262, 264], fa: [96, 100] })] },
+    frames: [P({ ua: [268, 270], fa: [268, 270] }), P({ ua: [276, 278], fa: [78, 82] })] },
   cablecurl: { label: "Cable curl", pin: "ankle", secs: 2.4, lines: [{ type: "cable", from: "hand", at: "ankle", dx: 40, dy: -2 }], scene: [{ type: "anchor", at: "ankle", dx: 40, dy: -2 }],
-    frames: [P({ ua: [272, 274], fa: [300, 300] }), P({ ua: [266, 268], fa: [100, 100] })] },
+    frames: [P({ ua: [272, 274], fa: [300, 300] }), P({ ua: [276, 278], fa: [80, 82] })] },
   dip: { label: "Bench dip", pin: "hand", pinY: GROUND - 38, x: 70, secs: 2.6, scene: [{ type: "bench", at: "hand", dy: 2, w: 36, dx: -10 }],
     frames: [P({ torso: 86, head: 88, ua: [252, 252], fa: [264, 264], th: [356, 356], sh: [282, 282], ft: [0, 0] }), P({ torso: 84, head: 86, ua: [196, 196], fa: [284, 284], th: [10, 10], sh: [292, 292], ft: [10, 10] })] },
   bench: { label: "Bench press", pin: "hip", prop: "dumbbells", secs: 2.8, scene: [{ type: "bench", at: "hip", dy: 6, w: 64, dx: -16 }],
-    frames: [P({ torso: 180, head: 180, th: [340, 340], sh: [268, 268], ft: [0, 0], ua: [90, 90], fa: [90, 90] }), P({ torso: 180, head: 180, th: [340, 340], sh: [268, 268], ft: [0, 0], ua: [242, 242], fa: [86, 86] })] },
+    frames: [P({ torso: 180, head: 180, th: [340, 340], sh: [268, 268], ft: [0, 0], ua: [90, 90], fa: [90, 90] }), P({ torso: 180, head: 180, th: [340, 340], sh: [268, 268], ft: [0, 0], ua: [334, 334], fa: [92, 92] })] },
   barbench: { label: "Barbell bench press", pin: "hip", prop: "barbell", secs: 2.8, scene: [{ type: "bench", at: "hip", dy: 6, w: 64, dx: -16 }],
-    frames: [P({ torso: 180, head: 180, th: [340, 340], sh: [268, 268], ft: [0, 0], ua: [90, 90], fa: [90, 90] }), P({ torso: 180, head: 180, th: [340, 340], sh: [268, 268], ft: [0, 0], ua: [242, 242], fa: [86, 86] })] },
+    frames: [P({ torso: 180, head: 180, th: [340, 340], sh: [268, 268], ft: [0, 0], ua: [90, 90], fa: [90, 90] }), P({ torso: 180, head: 180, th: [340, 340], sh: [268, 268], ft: [0, 0], ua: [334, 334], fa: [92, 92] })] },
   floorpress: { label: "Floor press", mat: true, pin: "hip", prop: "dumbbells", secs: 2.8,
     frames: [SU({ ua: [90, 90], fa: [90, 90] }), SU({ ua: [346, 346], fa: [90, 90] })] },
   fly: { label: "Chest fly", view: "front", pin: "feet", prop: "dumbbells", secs: 3,
@@ -201,7 +201,7 @@ export const MOVES = {
   pullup: { label: "Pull-up", view: "front", pin: "hand", pinY: 18, x: 120, secs: 3, scene: [{ type: "bar", at: "hand", dx: -10, w: 120 }],
     frames: [F({ ua: [64, 116], fa: [72, 108], th: [276, 264], sh: [268, 272], ft: [280, 260] }), F({ ua: [326, 214], fa: [76, 104], th: [280, 260], sh: [262, 278], ft: [280, 260] })] },
   trxrow: { label: "TRX row", pin: "toe", x: 150, secs: 2.8, lines: [{ type: "cable", from: "hand", at: "hand", dx: 34, dy: -80 }],
-    frames: [P({ torso: 116, head: 108, th: [296, 296], sh: [296, 296], ft: [26, 26], ua: [48, 48], fa: [48, 48] }), P({ torso: 108, head: 102, th: [288, 288], sh: [288, 288], ft: [18, 18], ua: [210, 210], fa: [66, 66] })] },
+    frames: [P({ torso: 116, head: 108, th: [296, 296], sh: [296, 296], ft: [26, 26], ua: [48, 48], fa: [48, 48] }), P({ torso: 108, head: 102, th: [288, 288], sh: [288, 288], ft: [18, 18], ua: [210, 210], fa: [28, 28] })] },
   facedown: { label: "Superman", mat: true, pin: "hip", x: 96, secs: 3,
     frames: [P({ torso: 0, head: 2, th: [180, 180], sh: [180, 180], ft: [180, 180], ua: [0, 0], fa: [0, 0] }), P({ torso: 12, head: 20, th: [170, 170], sh: [172, 172], ft: [180, 180], ua: [14, 14], fa: [16, 16] })] },
   backext: { label: "Back extension", pin: "hip", pinY: GROUND - 54, x: 90, secs: 3, scene: [{ type: "post", at: "hip", dy: 6 }],
@@ -237,7 +237,7 @@ export const MOVES = {
   march: { label: "March", pin: "hip", x: 100, secs: 1.6,
     frames: [P({ th: [326, 270], sh: [270, 270], ua: [290, 248], fa: [330, 256] }), P({ th: [270, 326], sh: [270, 270], ua: [248, 290], fa: [256, 330] })] },
   buttkick: { label: "Butt kicks", pin: "hip", x: 100, secs: 0.9,
-    frames: [P({ th: [262, 272], sh: [118, 270], ft: [30, 0], ua: [300, 240], fa: [40, 268] }), P({ th: [272, 262], sh: [270, 118], ft: [0, 30], ua: [240, 300], fa: [268, 40] })] },
+    frames: [P({ th: [262, 272], sh: [118, 270], ft: [190, 0], ua: [300, 240], fa: [40, 268] }), P({ th: [272, 262], sh: [270, 118], ft: [0, 190], ua: [240, 300], fa: [268, 40] })] },
   walk: { label: "Walk", pin: "hip", x: 100, secs: 1.4,
     frames: [P({ th: [292, 248], sh: [276, 236], ft: [8, 330], ua: [252, 290], fa: [262, 300] }), P({ th: [248, 292], sh: [236, 276], ft: [330, 8], ua: [290, 252], fa: [300, 262] })] },
   carry: { label: "Farmer's carry", pin: "hip", x: 100, prop: "dumbbells", secs: 1.4,
@@ -292,11 +292,11 @@ export const MOVES = {
     frames: [P({ torso: 80, head: 84, th: [330, 196], sh: [196, 184], ft: [190, 180], ua: [286, 286], fa: [280, 280] }), P({ torso: 32, head: 24, th: [330, 196], sh: [196, 184], ft: [190, 180], ua: [356, 356], fa: [356, 356] })] },
   hip9090: { label: "Hip 90/90 switch", view: "front", mat: true, pin: "hip", secs: 3.6,
     frames: [F({ ll: 0.8, th: [208, 230], sh: [300, 320], ft: [340, 340], ua: [240, 300], fa: [250, 290] }), F({ ll: 0.8, th: [310, 332], sh: [220, 240], ft: [200, 200], ua: [240, 300], fa: [250, 290] })] },
-  armcircles: { label: "Arm circles", pin: "ankle", secs: 2.4, loop: true,
+  armcircles: { free: true, label: "Arm circles", pin: "ankle", secs: 2.4, loop: true,
     frames: [P({ ua: [270, 270], fa: [270, 270] }), P({ ua: [0, 0], fa: [0, 0] }), P({ ua: [90, 90], fa: [90, 90] }), P({ ua: [180, 180], fa: [180, 180] })] },
   legswing: { label: "Leg swings", pin: "ankle1", x: 96, secs: 1.8, scene: [{ type: "wall", at: "hand", dx: 4 }],
     frames: [P({ th: [322, 270], sh: [322, 270], ft: [52, 0], ua: [4, 270], fa: [4, 270] }), P({ th: [228, 270], sh: [228, 270], ft: [318, 0], ua: [4, 270], fa: [4, 270] })] },
-  ankle: { label: "Ankle circles", pin: "hip", pinY: GROUND - 40, secs: 2.4, loop: true, scene: [benchAtHip()],
+  ankle: { free: true, label: "Ankle circles", pin: "hip", pinY: GROUND - 40, secs: 2.4, loop: true, scene: [benchAtHip()],
     frames: [SE({ th: [10, 0], sh: [4, 270], ft: [96, 0] }), SE({ th: [10, 0], sh: [4, 270], ft: [46, 0] }), SE({ th: [10, 0], sh: [4, 270], ft: [356, 0] }), SE({ th: [10, 0], sh: [4, 270], ft: [46, 0] })] },
   slstand: { label: "Single-leg stand", pin: "ankle1", x: 100, secs: 3.6,
     frames: [P({ th: [334, 270], sh: [270, 270], ft: [340, 0], ua: [330, 210], fa: [330, 210] }), P({ torso: 92, th: [330, 270], sh: [266, 270], ft: [338, 0], ua: [334, 206], fa: [334, 206] })] },
@@ -342,11 +342,25 @@ const rad = (d) => (d * Math.PI) / 180;
 const step = (p, a, len) => [p[0] + Math.cos(rad(a)) * len, p[1] + Math.sin(rad(a)) * len];
 const LINEAR = new Set(["tl", "al", "ll", "lift", "tb", "dx", "rp"]);
 function lerpAngle(a, b, t) { const d = ((b - a + 540) % 360) - 180; return a + d * t; }
-function blend(p, q, t) {
+// Side view: joints move the way a body can, not the shortest way round. Each angle is blended
+// relative to its parent segment inside its range of motion, so an elbow never bends backwards and a
+// curl never swings the forearm behind the body.
+const norm = (a, lo) => { let v = ((a - lo) % 360 + 360) % 360; return v + lo; };
+const RANGE = { ua: ["torso", 90], fa: ["ua", -40], th: ["torso", 90], sh: ["th", -220], ft: ["sh", -60] };
+function blend(p, q, t, front = false, free = false) {
   const o = {};
   for (const k of new Set([...Object.keys(p), ...Object.keys(q)])) {
     const a = p[k] ?? DEF[k], b = q[k] ?? DEF[k];
     o[k] = Array.isArray(a) ? a.map((v, i) => lerpAngle(v, b[i], t)) : LINEAR.has(k) ? a + (b - a) * t : lerpAngle(a, b, t);
+  }
+  if (front || free) return o;
+  for (const k of ["ua", "fa", "th", "sh", "ft"]) {
+    const [par, lo] = RANGE[k]; const pa = p[par] ?? p.torso, qa = q[par] ?? q.torso;
+    o[k] = [0, 1].map((i) => {
+      const P0 = Array.isArray(pa) ? pa[i] : pa, Q0 = Array.isArray(qa) ? qa[i] : qa, O0 = Array.isArray(o[par]) ? o[par][i] : o[par];
+      const ra = norm(p[k][i] - P0, lo), rb = norm(q[k][i] - Q0, lo);
+      return O0 + ra + (rb - ra) * t;
+    });
   }
   return o;
 }
@@ -563,19 +577,19 @@ export function moveSvg(key, { animate = true, label = true, props = true } = {}
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 // Two keyframes ping-pong with a short hold at each end. More keyframes play in order (loop: true wraps round).
-function poseAt(m, t) {
+export function poseAt(m, t) {
   const F = m.frames; const x = ((t % 1) + 1) % 1;
   const ease = (u) => (u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2);
   if (F.length === 2 && !m.loop) {
     const hold = 0.18; let u;
     if (x < hold) u = 0; else if (x < 0.5) u = (x - hold) / (0.5 - hold);
     else if (x < 0.5 + hold) u = 1; else u = 1 - (x - 0.5 - hold) / (0.5 - hold);
-    return blend(F[0], F[1], ease(u));
+    return blend(F[0], F[1], ease(u), m.view === "front", m.free);
   }
   const seq = m.loop ? [...F, F[0]] : [...F, ...F.slice(0, -1).reverse()];
   const n = seq.length - 1; const p = x * n; const i = Math.min(n - 1, Math.floor(p)); const f = p - i;
   const hold = m.loop ? 0.12 : 0.2; const u = f < hold ? 0 : (f - hold) / (1 - hold);
-  return blend(seq[i], seq[i + 1], m.loop ? u : ease(u));
+  return blend(seq[i], seq[i + 1], m.loop ? u : ease(u), m.view === "front", m.free);
 }
 
 const live = new Set(); let running = false, t0 = 0;
