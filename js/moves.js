@@ -1,3 +1,4 @@
+import { MUSCLES } from "./muscles.js";
 // =============================================================
 // Animated exercise demos, used until the coach adds her own video.
 // A figure is drawn from segment angles in degrees (0 = right, 90 = up, 270 = down).
@@ -328,6 +329,7 @@ const KEYWORDS = [
   [/pigeon/i, "pigeon"], [/90.90/i, "hip9090"], [/arm circle/i, "armcircles"], [/leg swing/i, "legswing"], [/ankle/i, "ankle"], [/single.leg stand|balance/i, "slstand"],
   [/stretch|greatest|reach|mobility/i, "stretch"],
 ];
+for (const k in MOVES) MOVES[k].key = k;
 export function moveFor(ex) {
   if (ex?.demo_move === "none") return null;
   if (ex?.demo_move && MOVES[ex.demo_move]) return ex.demo_move;
@@ -409,6 +411,54 @@ function sceneSvg(move) {
   }).join("");
 }
 
+// ---------- shaped body: tapered limbs and a torso with volume, plus muscle overlays
+// Profiles: [t along the segment, half-width on the front side, half-width on the back side]
+const PROF = {
+  thigh: [[0, 6.6, 7.2], [0.3, 6.8, 6.6], [0.75, 5.2, 5], [1, 4.2, 4]],
+  shin: [[0, 4.2, 4], [0.28, 4, 5.6], [0.7, 3, 3.2], [1, 2.5, 2.5]],
+  foot: [[0, 3.2, 3.6], [0.6, 2.8, 3], [1, 2.2, 2.6]],
+  uarm: [[0, 4.6, 4.6], [0.35, 4.3, 4.2], [1, 3, 3]],
+  farm: [[0, 3, 3], [0.35, 3.1, 2.9], [0.85, 2, 2], [1, 2.6, 2.6]],
+  torso: [[0, 7, 9.4], [0.18, 6.8, 8.4], [0.42, 5.8, 6.4], [0.68, 8.2, 7], [0.88, 7.2, 7.6], [1, 5.2, 6.2]],
+  torsoF: [[0, 10.2, 10.2], [0.35, 7.8, 7.8], [0.72, 10.4, 10.4], [0.9, 12.4, 12.4], [1, 9, 9]],
+};
+// Where each muscle sits on the moving figure: segment, side (f front, b back, x both), from, to
+const ZONES = {
+  quads: [["thigh", "f", 0.08, 0.92]], hamstrings: [["thigh", "b", 0.1, 0.9]], glutes: [["torso", "b", 0, 0.24], ["thigh", "b", 0, 0.22]],
+  hipflexors: [["thigh", "f", 0, 0.3], ["torso", "f", 0, 0.12]], abductors: [["thigh", "x", 0, 0.28]], adductors: [["thigh", "b", 0.05, 0.6]],
+  calves: [["shin", "b", 0.08, 0.66]], shins: [["shin", "f", 0.1, 0.85]],
+  biceps: [["uarm", "f", 0.25, 0.92]], triceps: [["uarm", "b", 0.2, 0.9]], delts: [["uarm", "f", 0, 0.32]], sidedelts: [["uarm", "x", 0, 0.3]], reardelts: [["uarm", "b", 0, 0.32]],
+  forearms: [["farm", "x", 0.02, 0.72]], chest: [["torso", "f", 0.62, 0.9]], abs: [["torso", "f", 0.28, 0.62]], obliques: [["torso", "f", 0.3, 0.6]],
+  lats: [["torso", "b", 0.5, 0.86]], traps: [["torso", "b", 0.84, 1]], lowerback: [["torso", "b", 0.26, 0.5]],
+};
+const BACK_ONLY = new Set(["hamstrings", "glutes", "triceps", "reardelts", "lats", "traps", "lowerback", "adductors"]);
+function workOf(move) {
+  if (move._w) return move._w;
+  const [p, s] = MUSCLES[move.key] || [[], []]; const front = move.view === "front";
+  const z = (list) => { const o = {}; list.forEach((m) => { if (front && BACK_ONLY.has(m)) return; (ZONES[m] || []).forEach(([seg, side, a, b]) => (o[seg] ||= []).push([front && side !== "x" ? "x" : side, a, b])); }); return o; };
+  return (move._w = { p: z(p), s: z(s.filter((m) => !p.includes(m))) });
+}
+const wAt = (prof, t, i) => { for (let k = 1; k < prof.length; k++) if (t <= prof[k][0]) { const [t0] = prof[k - 1], [t1] = prof[k]; const u = (t - t0) / (t1 - t0 || 1); return prof[k - 1][i] + (prof[k][i] - prof[k - 1][i]) * u; } return prof[prof.length - 1][i]; };
+const smooth = (pts, S) => { const P2 = pts.map(S).map(([x, y]) => [+x, +y]); const n = P2.length; const mid = (a, b) => [((a[0] + b[0]) / 2).toFixed(1), ((a[1] + b[1]) / 2).toFixed(1)];
+  let d = `M${mid(P2[n - 1], P2[0]).join(" ")}`; for (let i = 0; i < n; i++) d += `Q${P2[i][0].toFixed(1)} ${P2[i][1].toFixed(1)} ${mid(P2[i], P2[(i + 1) % n]).join(" ")}`; return d + "Z"; };
+// spine(t) -> { c: centre, u: unit tangent, n: unit normal towards the front }
+function lineSpine(a, b, flip) { const dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy) || 1; const u = [dx / len, dy / len]; const n = flip ? [u[1], -u[0]] : [-u[1], u[0]]; return (t) => ({ c: [a[0] + dx * t, a[1] + dy * t], u, n }); }
+const at = (sp, t, w) => { const { c, n } = sp(t); return [c[0] + n[0] * w, c[1] + n[1] * w]; };
+function outline(sp, prof) {
+  const T = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]; const pts = T.map((t) => at(sp, t, wAt(prof, t, 1)));
+  const cap = (t, sgn) => { const { c, u, n } = sp(t); const f = wAt(prof, t, 1), b = wAt(prof, t, 2), r = (f + b) / 2 * 0.9; const out = [];
+    for (const deg of [30, 60, 90, 120, 150]) { const ph = deg * Math.PI / 180, cs = Math.cos(ph), w = cs > 0 ? f : b; const pp = sgn > 0 ? [cs, Math.sin(ph)] : [-cs, Math.sin(ph)];
+      out.push([c[0] + n[0] * pp[0] * w + u[0] * sgn * pp[1] * r, c[1] + n[1] * pp[0] * w + u[1] * sgn * pp[1] * r]); } return out; };
+  return [...pts, ...cap(1, 1), ...T.slice().reverse().map((t) => at(sp, t, -wAt(prof, t, 2))), ...cap(0, -1)];
+}
+function zone(sp, prof, [side, a, b], full = false) {
+  const T = [0, 0.2, 0.4, 0.6, 0.8, 1].map((u) => a + (b - a) * u); const k = full ? 1.01 : 0.94;
+  const edge = (t, s) => at(sp, t, s > 0 ? wAt(prof, t, 1) * k : -wAt(prof, t, 2) * k);
+  if (side === "x") return [...T.map((t) => edge(t, 1)), ...T.slice().reverse().map((t) => edge(t, -1))];
+  const s = side === "f" ? 1 : -1; const inner = (t) => at(sp, t, s * (s > 0 ? wAt(prof, t, 1) : wAt(prof, t, 2)) * (full ? 0 : 0.12));
+  return [...T.map((t) => edge(t, s)), ...T.slice().reverse().map(inner)];
+}
+
 function drawPose(svg, move, pose) {
   const front = move.view === "front";
   const showProps = svg.closest(".move")?.dataset.props !== "0";
@@ -417,17 +467,34 @@ function drawPose(svg, move, pose) {
   const S = (p) => [(p[0] + off.dx).toFixed(1), (GROUND - (p[1] + off.dy)).toFixed(1)];
   const seg = (a, b) => { const [x1, y1] = S(a), [x2, y2] = S(b); return `M${x1} ${y1}L${x2} ${y2}`; };
   const set = (cls, d) => { const el = svg.querySelector("." + cls); if (el) el.setAttribute("d", d); };
-  const legD = (i) => [seg(j.legs[i].h, j.legs[i].k), seg(j.legs[i].k, j.legs[i].a), seg(j.legs[i].a, j.legs[i].t)];
-  const armD = (i) => [seg(j.arms[i].s, j.arms[i].e), seg(j.arms[i].e, j.arms[i].h)];
-  const [fT, fS, fF] = legD(1), [nT, nS, nF] = legD(0), [fU, fL] = armD(1), [nU, nL] = armD(0);
-  set("m-thigh-f", fT); set("m-shin-f", fS); set("m-shoe-f", fF); set("m-uarm-f", fU); set("m-farm-f", fL);
-  set("m-thigh-n", nT); set("m-shin-n", nS); set("m-shoe-n", nF); set("m-uarm-n", nU); set("m-farm-n", nL);
-  // torso: a gentle curve when the spine rounds (tb), a crop top over the chest and a waistband at the hips
+  const work = workOf(move);
+  // one limb part: its shape plus primary/secondary muscle overlays
+  const part = (name, segName, sp, prof) => {
+    set(`m-${name}`, smooth(outline(sp, prof), S));
+    set(`m-${name}-p`, (work.p[segName] || []).map((z) => smooth(zone(sp, prof, z), S)).join(""));
+    set(`m-${name}-s`, (work.s[segName] || []).map((z) => smooth(zone(sp, prof, z), S)).join(""));
+  };
+  [["n", 0], ["f", 1]].forEach(([w, i]) => {
+    const L2 = j.legs[i], A = j.arms[i];
+    part(`thigh-${w}`, "thigh", lineSpine(L2.h, L2.k), PROF.thigh);
+    part(`shin-${w}`, "shin", lineSpine(L2.k, L2.a), PROF.shin);
+    set(`m-shoe-${w}`, smooth(outline(lineSpine(L2.a, L2.t), PROF.foot), S));
+    part(`uarm-${w}`, "uarm", lineSpine(A.s, A.e), PROF.uarm);
+    part(`farm-${w}`, "farm", lineSpine(A.e, A.h), PROF.farm);
+  });
+  // torso: follows the spine curve (tb rounds the back); shorts low, bare midriff, crop top over the chest
   const tb = pose.tb || 0; const mid = [(j.hip[0] + j.sh[0]) / 2, (j.hip[1] + j.sh[1]) / 2];
-  const n = rad(pose.torso + 90); const ctrl = [mid[0] + Math.cos(n) * tb, mid[1] + Math.sin(n) * tb];
-  const q = (t) => [(1 - t) ** 2 * j.hip[0] + 2 * (1 - t) * t * ctrl[0] + t * t * j.sh[0], (1 - t) ** 2 * j.hip[1] + 2 * (1 - t) * t * ctrl[1] + t * t * j.sh[1]];
-  const curve = (a, b) => { const pts = [0, 0.25, 0.5, 0.75, 1].map((u) => q(a + (b - a) * u)); return "M" + pts.map((p) => S(p).join(" ")).join("L"); };
-  set("m-waist", curve(0, front ? 0.28 : 0.32)); set("m-top", curve(front ? 0.28 : 0.32, 1)); set("m-neck", seg(j.sh, j.neck));
+  const nn = rad(pose.torso + 90); const ctrl = [mid[0] + Math.cos(nn) * tb, mid[1] + Math.sin(nn) * tb];
+  const tsp = (t) => { const c = [(1 - t) ** 2 * j.hip[0] + 2 * (1 - t) * t * ctrl[0] + t * t * j.sh[0], (1 - t) ** 2 * j.hip[1] + 2 * (1 - t) * t * ctrl[1] + t * t * j.sh[1]];
+    const d = [2 * (1 - t) * (ctrl[0] - j.hip[0]) + 2 * t * (j.sh[0] - ctrl[0]), 2 * (1 - t) * (ctrl[1] - j.hip[1]) + 2 * t * (j.sh[1] - ctrl[1])]; const len = Math.hypot(d[0], d[1]) || 1; const u = [d[0] / len, d[1] / len];
+    return { c, u, n: [u[1], -u[0]] }; };
+  const tp = front ? PROF.torsoF : PROF.torso;
+  set("m-torso", smooth(outline(tsp, tp), S));
+  set("m-waist", smooth(zone(tsp, tp, ["x", 0, front ? 0.27 : 0.3], true), S));
+  set("m-top", smooth(zone(tsp, tp, ["x", front ? 0.46 : 0.44, 0.97], true), S));
+  set("m-torso-p", (work.p.torso || []).map((z) => smooth(zone(tsp, tp, z), S)).join(""));
+  set("m-torso-s", (work.s.torso || []).map((z) => smooth(zone(tsp, tp, z), S)).join(""));
+  set("m-neck", seg(j.sh, j.neck));
   const [hx, hy] = S(j.head);
   const hair = svg.querySelector(".m-hair"), bn = svg.querySelector(".m-bun"), hd = svg.querySelector(".m-head");
   if (front) {
@@ -484,13 +551,13 @@ export function moveSvg(key, { animate = true, label = true, props = true } = {}
       <line class="m-ground" x1="14" y1="${GROUND + 1.5}" x2="${W - 14}" y2="${GROUND + 1.5}"/>
       ${m.mat ? `<rect class="m-mat" x="10" y="${GROUND - 2}" width="${W - 20}" height="6" rx="3"/>` : ""}
       <g class="m-scene">${sceneSvg(m)}</g>
-      <path class="m-uarm-f m-skin-f"/><path class="m-farm-f m-skin-f"/>
-      <path class="m-thigh-f m-legs-f"/><path class="m-shin-f m-legs-f"/><path class="m-shoe-f"/>
+      <path class="m-uarm-f m-skin-f"/><path class="m-uarm-f-s m-mus s"/><path class="m-uarm-f-p m-mus p"/><path class="m-farm-f m-skin-f"/><path class="m-farm-f-s m-mus s"/><path class="m-farm-f-p m-mus p"/>
+      <path class="m-thigh-f m-legs-f"/><path class="m-thigh-f-s m-mus s"/><path class="m-thigh-f-p m-mus p"/><path class="m-shin-f m-legs-f"/><path class="m-shin-f-s m-mus s"/><path class="m-shin-f-p m-mus p"/><path class="m-shoe-f"/>
       <g class="m-lines"></g><g class="m-props"></g>
-      <path class="m-waist"/><path class="m-top"/><path class="m-neck m-skin"/>
+      <path class="m-torso m-skin"/><path class="m-waist"/><path class="m-top"/><path class="m-torso-s m-mus s"/><path class="m-torso-p m-mus p"/><path class="m-neck m-skin"/>
       <circle class="m-bun" r="${(HEAD_R * 0.62).toFixed(1)}"/><circle class="m-hair" r="${(HEAD_R + 1).toFixed(1)}"/><circle class="m-head" r="${HEAD_R}"/>
-      <path class="m-thigh-n m-legs"/><path class="m-shin-n m-legs"/><path class="m-shoe-n"/>
-      <path class="m-uarm-n m-skin"/><path class="m-farm-n m-skin"/>
+      <path class="m-thigh-n m-legs"/><path class="m-thigh-n-s m-mus s"/><path class="m-thigh-n-p m-mus p"/><path class="m-shin-n m-legs"/><path class="m-shin-n-s m-mus s"/><path class="m-shin-n-p m-mus p"/><path class="m-shoe-n"/>
+      <path class="m-uarm-n m-skin"/><path class="m-uarm-n-s m-mus s"/><path class="m-uarm-n-p m-mus p"/><path class="m-farm-n m-skin"/><path class="m-farm-n-s m-mus s"/><path class="m-farm-n-p m-mus p"/>
     </svg>${label ? `<figcaption>${esc(m.label)}: animated demo. Your coach's video replaces it.</figcaption>` : ""}</figure>`;
 }
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));

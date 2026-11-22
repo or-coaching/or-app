@@ -2,6 +2,7 @@ import { CONFIG, BRAND } from "./config.js";
 import { FOODS, WEEKLY_BUFFER, RECIPES, calcPoints, dailyKcal, waterGoal, GLASS_ML, WATER_TIPS } from "./nutrition.js";
 import { CHALLENGES, TIPS, BADGES, badgeStats, medal, pickForDate, ROULETTE_UNLOCK_DAYS } from "./engage.js";
 import { MOVES, moveFor, moveSvg, startMoves } from "./moves.js";
+import { NAMES as MUSCLE_NAMES, musclesFor, muscleMapSvg } from "./muscles.js";
 import { STARTER } from "./starter.js";
 
 // ---------------------------------------------------------------- setup
@@ -817,7 +818,7 @@ async function rouletteView() {
       const url = await videoUrl(pick.video_path);
       const presc = pick.muscle_group === "Cardio" ? "3 rounds of 40 seconds on, 20 off" : pick.muscle_group === "Mobility" ? "2 rounds of 60 seconds" : pick.equipment?.length ? "3 sets of 10–12 at a weight you could lift 2 more times" : "3 sets of 12–15";
       $("#result").innerHTML = `<div class="card ex-card"><h2>${esc(pick.name)}</h2><span class="chip">${esc(pick.muscle_group)}</span>
-        ${demoHtml(pick, url)}
+        ${demoHtml(pick, url)}${musclesHtml(pick)}
         <div class="target">Try: <b>${esc(presc)}</b></div>
         ${pick.cues?.length ? `<div class="cues"><b>Form cues</b><ul>${pick.cues.map((c) => `<li>${esc(c)}</li>`).join("")}</ul></div>` : ""}
         ${swapHtml(swapSuggestions(pick, pool, me.equipment))}
@@ -961,8 +962,10 @@ async function loadWorkout(id) {
     const by = {}; prev.forEach((l) => (by[l.workout_item_id] ??= []).push(l));
     return Object.values(by).map((sets) => ({ date: sets[0].logged_at, sets: sets.sort((a, b) => a.set_number - b.set_number) })).sort((a, b) => b.date.localeCompare(a.date));
   };
-  const urls = await signedMap(order.map((i) => i.exercises));
-  return { w, order, logs, mine, history, urls };
+  const [urls, { data: nrows }] = await Promise.all([signedMap(order.map((i) => i.exercises)),
+    order.length ? sb.from("item_notes").select("workout_item_id,note").in("workout_item_id", order.map((i) => i.id)) : Promise.resolve({ data: [] })]);
+  const notes = Object.fromEntries((nrows || []).map((n) => [n.workout_item_id, n.note]));
+  return { w, order, logs, mine, history, urls, notes };
 }
 
 async function workoutView(id) {
@@ -1020,7 +1023,7 @@ function runTimer(box, { secs, kind = "Rest", next = "", onEnd }) {
 
 async function sessionView(id, startAt) {
   const d = await loadWorkout(id); if (!d) return render(`<div class="empty">Workout not found.</div>`);
-  const { w, order, logs, history } = d; let mine = d.mine;
+  const { w, order, logs, history } = d; let mine = d.mine; const notes = d.notes || {};
   if (!order.length) return go("workout/" + id);
   if (w.completed_at) return go("workout/" + id);
   const { data: lib } = await sb.from("exercises").select("id,name,muscle_group,equipment");
@@ -1066,11 +1069,15 @@ async function sessionView(id, startAt) {
       <p class="muted" style="margin:-2px 0 8px">${esc([...new Set([catOf(ex), ex.muscle_group].filter(Boolean))].join(", "))}${(ex.equipment || []).length ? `. ${(ex.equipment || []).map(esc).join(", ")}` : ""}</p>
       <div class="sess-demo" id="demo">${demoHtml(ex, d.urls?.[ex.video_path]) || `<div class="empty">No demo yet. Ask your coach for a video.</div>`}</div>
       <button type="button" class="small ghost" id="replay">Replay demo</button>
+      ${musclesHtml(ex)}
       <div class="sess-target"><b>${esc(targetText(it))}</b>${it.notes ? `<div class="coach-note-inline">${esc(it.notes)}</div>` : ""}</div>
       ${ready ? `<div class="nudge">${ICON.up} You hit every rep at ${topW} kg last time. If your form felt solid, try ${topW + (topW < 10 ? 1 : 2)} kg today.</div>` : ""}
       <div id="timer"></div>
       <div class="card sets"><div class="srow head"><span>Set</span><span>Last time</span><span>kg</span><span>${timed ? "Secs" : "Reps"}</span><span></span></div>${rows}
         <button type="button" class="small ghost" id="addSet" style="margin-top:8px">+ Add a set</button></div>
+      <div class="card inote"><label for="iNote" style="margin-top:0">Note for your coach about this exercise</label>
+        <textarea id="iNote" maxlength="1000" placeholder="Optional, e.g. felt it in my lower back on set 3, or the weight was too light">${esc(notes[it.id] || "")}</textarea>
+        <p class="muted" id="iNoteSt" style="margin:4px 0 0">${notes[it.id] ? "Saved. Your coach can see it." : "Saves automatically. Your coach sees it with this workout."}</p></div>
       ${ex.instructions || ex.cues?.length ? `<details class="card how" ${hist.length ? "" : "open"}><summary>How to do it</summary>${ex.instructions ? `<p>${esc(ex.instructions)}</p>` : ""}
         ${ex.cues?.length ? `<ul class="tips">${ex.cues.map((c) => `<li>${esc(c)}</li>`).join("")}</ul>` : ""}</details>` : ""}
       ${hist.length ? `<details class="card"><summary>Your history (${hist.length} ${hist.length === 1 ? "session" : "sessions"})</summary>
@@ -1085,7 +1092,8 @@ async function sessionView(id, startAt) {
   };
 
   const ticker = setInterval(() => { const c = $("#sClock"); if (!c) return clearInterval(ticker); c.textContent = clock(sessElapsed(st)); }, 1000);
-  const goTo = (i) => { clearInterval(timerT); st.idx = i; save(); draw(); window.scrollTo(0, 0); };
+  let flushNote = async () => {};
+  const goTo = async (i) => { await flushNote(); clearInterval(timerT); st.idx = i; save(); draw(); window.scrollTo(0, 0); };
 
   const saveSet = async (row, it) => {
     const vals = Object.fromEntries($$("input", row).map((i) => [i.dataset.f, num(i.value)]));
@@ -1133,6 +1141,18 @@ async function sessionView(id, startAt) {
         const ok = await saveSet(row, it); if (ok) { row.querySelector("[data-done]").setAttribute("aria-pressed", "true"); b.remove(); setTimeout(() => startRestFor(+row.dataset.set), 1200); }
       } });
     }));
+    let nT = null; const nBox = $("#iNote");
+    const saveNote = async () => {
+      clearTimeout(nT); const v = nBox.value.trim(); if (v === (notes[it.id] || "")) return;
+      const stEl = $("#iNoteSt"); if (stEl) stEl.textContent = "Saving…";
+      const { error } = v ? await sb.from("item_notes").upsert({ workout_item_id: it.id, client_id: me.id, note: v, updated_at: new Date().toISOString() }, { onConflict: "workout_item_id" })
+        : await sb.from("item_notes").delete().eq("workout_item_id", it.id);
+      if (error) { if (stEl) stEl.textContent = navigator.onLine ? "Couldn't save the note. Try again." : "You're offline. The note will save when you type again with signal."; return; }
+      if (v) notes[it.id] = v; else delete notes[it.id];
+      if ($("#iNoteSt")) $("#iNoteSt").textContent = v ? "Saved. Your coach can see it." : "Note removed.";
+    };
+    nBox.oninput = () => { clearTimeout(nT); nT = setTimeout(saveNote, 1200); };
+    nBox.onblur = saveNote; flushNote = saveNote;
     $("#addSet").onclick = () => {
       const rows = $$(".srow[data-set]"); const last = rows[rows.length - 1]; const c = last.cloneNode(true); const n = rows.length + 1;
       c.dataset.set = n; c.dataset.log = ""; c.classList.remove("done", "queued"); c.querySelector(".sn").textContent = n; c.querySelector(".sprev").textContent = "–";
@@ -1164,7 +1184,8 @@ async function sessionView(id, startAt) {
     };
   };
 
-  const finish = () => {
+  const finish = async () => {
+    await flushNote();
     const totalSets = order.reduce((s, x) => s + (x.target_sets || 3), 0);
     if (mine.length < totalSets && !confirm(`You've done ${mine.length} of ${totalSets} sets. Finish the workout anyway?`)) return;
     clearInterval(timerT); clearInterval(ticker);
@@ -1186,6 +1207,7 @@ async function sessionView(id, startAt) {
       <div class="ov-stats"><div><b>${clock(secs * 1000)}</b><span>duration</span></div><div><b>${exDone}/${order.length}</b><span>exercises</span></div><div><b>${mine.length}</b><span>sets</span></div></div>
       ${volume ? `<p class="muted" style="text-align:center">${volume.toLocaleString("en-ZA")} kg lifted in total</p>` : ""}
       <div class="card"><h3>${wins.length ? "Improvements" : "Progress"}</h3>${wins.length ? `<ul class="tips">${wins.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : `<p class="muted" style="margin:0">Matching last time still counts. Consistency is what builds results.</p>`}</div>
+      ${order.some((x) => notes[x.id]) ? `<div class="card"><h3>Your exercise notes</h3>${order.filter((x) => notes[x.id]).map((x) => `<p class="fb-note"><b>${esc(x.exercises.name)}:</b> ${esc(notes[x.id])}</p>`).join("")}<p class="muted" style="margin:0">Your coach will see these.</p></div>` : ""}
       <form class="card" id="fb"><h3>How hard was it?</h3><div class="diff">${DIFF.map((l, i) => `<label><input type="radio" name="d" value="${i + 1}" ${i === 2 ? "checked" : ""}><span>${l}</span></label>`).join("")}</div>
         <label for="fbT">Anything for your coach?</label><textarea id="fbT" name="t" maxlength="1000" placeholder="Optional, e.g. squats felt easy, left knee a bit sore"></textarea>
         <button class="block" style="margin-top:12px">Save workout</button></form></div>`);
@@ -1195,11 +1217,12 @@ async function sessionView(id, startAt) {
       if (!navigator.onLine) { btn.disabled = false; return toast("You're offline. Your sets are saved on your phone. Tap Save again when you have signal."); }
       await flushQ();
       const difficulty = +f.d.value, feedback = f.t.value.trim() || null;
+      const exNotes = order.filter((x) => notes[x.id]).map((x) => `${x.exercises.name}: ${notes[x.id]}`);
       const { error } = await sb.from("workouts").update({ completed_at: new Date().toISOString(), duration_seconds: secs, difficulty, client_feedback: feedback }).eq("id", w.id);
       if (fail(error)) { btn.disabled = false; return; }
       clearSess(id);
       if (me.trainer_id && me.trainer_id !== me.id) await sb.from("messages").insert({ client_id: me.id, sender_id: me.id,
-        body: `Finished "${w.name}" in ${clock(secs * 1000)}: ${mine.length} sets, felt ${DIFF[difficulty - 1].toLowerCase()}.${wins.length ? ` ${wins.join("; ")}.` : ""}${feedback ? ` Note: ${feedback}` : ""}` });
+        body: `Finished "${w.name}" in ${clock(secs * 1000)}: ${mine.length} sets, felt ${DIFF[difficulty - 1].toLowerCase()}.${wins.length ? ` ${wins.join("; ")}.` : ""}${feedback ? ` Note: ${feedback}` : ""}${exNotes.length ? ` Exercise notes: ${exNotes.join("; ")}.` : ""}` });
       toast("Workout saved. Your coach can see how it went."); go("home");
     };
   };
@@ -1233,6 +1256,8 @@ function demoHtml(ex, url, opts = {}) {
   const mv = moveFor(ex);
   return mv ? moveSvg(mv, { props: (ex.equipment || []).length > 0, ...opts }) : "";
 }
+// Body map of the muscles this exercise works (coach's own picks first, then the animation's, then the muscle group).
+function musclesHtml(ex, opts = {}) { const m = musclesFor(ex, moveFor(ex)); return m[0].length ? muscleMapSvg(m, opts) : ""; }
 function tileHtml(x, urls, href) {
   const u = urls[x.video_path];
   return `<a class="tile" href="${href}">${u ? `<video src="${esc(u)}#t=0.8" muted playsinline preload="metadata"></video>` : ytThumb(x) && !moveFor(x) ? `<img class="ph" src="${esc(ytThumb(x))}" alt="" loading="lazy">` : `<span class="ph" aria-hidden="true">${moveFor(x) ? moveSvg(moveFor(x), { animate: false, label: false, props: (x.equipment || []).length > 0 }) : forms(seedOf(x.name), { w: 200, h: 250, scale: 0.55 })}</span>`}
@@ -1287,7 +1312,7 @@ async function clientExercise(id) {
   const url = await videoUrl(ex.video_path);
   render(`<button class="back" onclick="history.back()">← Library</button>
     <div class="card ex-card"><div class="row between"><h1>${esc(ex.name)}</h1><span class="chip">${esc(ex.muscle_group)}</span></div>
-      ${demoHtml(ex, url) || `<div class="empty">No demo yet.</div>`}
+      ${demoHtml(ex, url) || `<div class="empty">No demo yet.</div>`}${musclesHtml(ex)}
       <p class="muted">Equipment: ${(ex.equipment || []).map(esc).join(", ") || "Bodyweight"}</p>
       ${ex.cues?.length ? `<div class="cues"><b>Form cues</b><ul>${ex.cues.map((c) => `<li>${esc(c)}</li>`).join("")}</ul></div>` : ""}
       ${swapHtml(swapSuggestions(ex, lib || [], me.equipment))}
@@ -2003,7 +2028,9 @@ function checkinHistory(rows) {
 async function trainerClient(id) {
   const [{ data: c }, { data: wos }, { data: cks }, { data: hs }, { data: notes }, { data: water }, { data: metrics }] = await Promise.all([
     sb.from("profiles").select("*").eq("id", id).single(),
-    sb.from("workouts").select("*, workout_items(count)").eq("client_id", id).order("created_at", { ascending: false }),
+    sb.from("workouts").select("*, workout_items(count)").eq("client_id", id).order("created_at", { ascending: false }).then(async (r) => {
+      const { data: ns } = await sb.from("item_notes").select("*, workout_items(workout_id, exercises(name))").eq("client_id", id).order("updated_at", { ascending: false });
+      (r.data || []).forEach((w) => (w.ex_notes = (ns || []).filter((n) => n.workout_items?.workout_id === w.id))); return r; }),
     sb.from("checkins").select("*").eq("client_id", id).gte("checkin_date", new Date(Date.now() - 13 * 864e5).toISOString().slice(0, 10)).order("checkin_date", { ascending: false }),
     sb.from("health_screens").select("*").eq("client_id", id),
     sb.from("coach_notes").select("*").eq("client_id", id).order("created_at", { ascending: false }),
@@ -2041,7 +2068,8 @@ async function trainerClient(id) {
       ${(wos || []).map((w) => `<a class="list-item" href="#/builder/${c.id}/${w.id}"><div class="grow"><b>${esc(w.name)}</b>
         <div class="muted">${w.workout_items?.[0]?.count || 0} exercises${w.scheduled_date ? ", " + fmtDate(w.scheduled_date) : ""}${w.duration_seconds ? `, took ${Math.round(w.duration_seconds / 60)} min` : ""}${w.difficulty ? `, felt ${["very easy", "easy", "just right", "hard", "very hard"][w.difficulty - 1]}` : ""}${w.template_id ? `, from "${esc((tpls || []).find((t) => t.id === w.template_id)?.name || "a saved workout")}"` : ""}</div></div>
         ${w.completed_at ? `<span class="chip good">Done ${fmtDate(w.completed_at)}</span>` : `<span class="chip">Open</span>`}</a>
-        ${w.client_feedback ? `<p class="muted fb-note">"${esc(w.client_feedback)}"</p>` : ""}`).join("")
+        ${w.client_feedback ? `<p class="muted fb-note">"${esc(w.client_feedback)}"</p>` : ""}
+        ${(w.ex_notes || []).map((n) => `<p class="muted fb-note"><b>${esc(n.workout_items?.exercises?.name || "Exercise")}:</b> "${esc(n.note)}"</p>`).join("")}`).join("")
         || `<div class="empty">No workouts yet.</div>`}</div>
     ${prog.html}`);
   prog.after();
@@ -2270,6 +2298,8 @@ async function builder({ kind, id, clientId }) {
     sb.from("workout_templates").select("*").order("name"),
   ]);
   const c = cRes.data, w = wRes.data;
+  const cNotes = {};
+  if (!isTpl && w?.workout_items?.length) { const { data: ns } = await sb.from("item_notes").select("workout_item_id,note").in("workout_item_id", w.workout_items.map((i) => i.id)); (ns || []).forEach((n) => (cNotes[n.workout_item_id] = n.note)); }
   if ((id && !w) || (!isTpl && !c)) return render(`<div class="empty">Workout not found.</div>`);
   let items = (isTpl ? (w?.items || []) : (w?.workout_items || []).sort((a, b) => a.position - b.position)).map((i) => ({ ...i, section: sectionOf(i) }));
   let fromTpl = !isTpl ? w?.template_id || null : null;
@@ -2289,6 +2319,7 @@ async function builder({ kind, id, clientId }) {
         <div class="grow"><b>${n}. ${esc(ex.name)}</b><div class="muted">${esc([...new Set([catOf(ex), ex.muscle_group].filter(Boolean))].join(", "))}${need.length ? `, <span style="color:var(--warn)">needs ${esc(need.join(", "))}</span>` : ""}</div></div></div>
       ${owned && need.length ? swapHtml(swapSuggestions(ex, lib, owned)) : ""}
       <div class="grid5">${FIELDS.map(([k, l, m]) => `<div><label>${l}</label><input data-k="${k}" type="number" inputmode="${m}" ${k === "target_weight_kg" ? 'step="0.5"' : 'min="0"'} value="${it[k] ?? ""}"></div>`).join("")}</div>
+      ${it.id && cNotes[it.id] ? `<p class="fb-note client-said"><b>${esc(who)} said:</b> "${esc(cNotes[it.id])}"</p>` : ""}
       <label>Note for this exercise</label><input data-k="notes" value="${esc(it.notes)}" placeholder="e.g. Slow on the way down">
       <div class="row" style="gap:8px;margin-top:10px"><button type="button" class="small secondary" data-rep="${i}">Replace</button><button type="button" class="small ghost" data-rm="${i}">Remove</button></div></div>`;
   };
@@ -2438,6 +2469,9 @@ async function exerciseEditor(id) {
       <select id="dm" name="dm">${[["", "Match automatically from the name"], ...Object.entries(MOVES).map(([k, m]) => [k, m.label]), ["none", "No animation"]]
         .map(([v, l]) => `<option value="${v}" ${(ex.demo_move || "") === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
       <div id="dmPrev" class="dm-prev"></div>
+      <label>Muscles worked <span class="muted">(clients see these lit up on a body map. Leave blank to use the animation's muscles)</span></label>
+      <div id="mu">${Object.entries(MUSCLE_NAMES).map(([k, n]) => `<span class="chip ${(ex.muscles || []).includes(k) ? "on" : ""}" data-m="${k}" role="button">${n}</span>`).join("")}</div>
+      <div id="muPrev"></div>
       <label for="vu">Video link <span class="muted">(YouTube, Vimeo or Instagram. Clients see it instead of the animation)</span></label>
       <div class="row" style="gap:8px"><input id="vu" name="vu" type="url" inputmode="url" placeholder="Paste a YouTube link" value="${esc(ex.video_url || "")}" style="flex:1;min-width:0">
         <a class="btn small secondary" id="ytFind" target="_blank" rel="noopener" href="#">Find on YouTube</a></div>
@@ -2476,7 +2510,10 @@ async function exerciseEditor(id) {
     $("#dmPrev").innerHTML = mv ? moveSvg(mv, { label: false, props: $$("#eq .chip.on").length > 0 }) + `<p class="muted" style="margin:6px 0 0">${esc(MOVES[mv].label)}${f.dm.value ? "" : ", matched from the name"}</p>`
       : `<p class="muted" style="margin:0">No animation. Choose one above, or upload a video.</p>`;
     startMoves($("#dmPrev"));
+    const picked = $$("#mu .chip.on").map((c) => c.dataset.m);
+    $("#muPrev").innerHTML = musclesHtml({ name: f.name.value, demo_move: f.dm.value || null, muscle_group: f.mg.value, muscles: picked }) || `<p class="muted">Pick the muscles, or choose an animation above.</p>`;
   };
+  $$("#mu .chip").forEach((c) => (c.onclick = () => { c.classList.toggle("on"); preview(); }));
   $("#dm").onchange = preview; $("#ef").name.addEventListener("input", preview); $$("#eq .chip").forEach((c) => c.addEventListener("click", preview)); preview();
   $("#ai").onclick = async () => {
     const f = $("#ef"); if (!f.name.value) return toast("Add the exercise name first");
@@ -2511,7 +2548,9 @@ async function exerciseEditor(id) {
     const row = { trainer_id: me.id, name: f.name.value.trim(), category: f.cat.value, muscle_group: f.mg.value, equipment: $$("#eq .chip.on").map((c) => c.dataset.e),
       instructions: f.ins.value || null, cues: f.cues.value.split("\n").map((s) => s.trim()).filter(Boolean), video_path,
       reward_streak: f.rw.value ? Number(f.rw.value) : null, categories: $$("#ty .chip.on").map((c) => c.dataset.t), demo_move: f.dm.value || null,
-      level: f.lv.value, tags: $$("#gf .chip.on").map((c) => c.dataset.g), video_url: f.vu.value.trim() ? cleanUrl(f.vu.value) : null };
+      level: f.lv.value, tags: $$("#gf .chip.on").map((c) => c.dataset.g), video_url: f.vu.value.trim() ? cleanUrl(f.vu.value) : null,
+      muscles: $$("#mu .chip.on").map((c) => c.dataset.m) };
+    if (!row.muscles.length) row.muscles = null;
     if (f.vu.value.trim() && !row.video_url) { btn.disabled = false; return toast("That video link doesn't look right. Copy it from the Share button."); }
     const { error } = isNew ? await sb.from("exercises").insert(row) : await sb.from("exercises").update(row).eq("id", id);
     btn.disabled = false; btn.textContent = "Save to library";

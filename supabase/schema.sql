@@ -709,3 +709,25 @@ alter table public.profiles alter column library_free set default false;
 alter table public.workouts add column if not exists duration_seconds int check (duration_seconds is null or duration_seconds between 0 and 86400);
 alter table public.workouts add column if not exists difficulty smallint check (difficulty is null or difficulty between 1 and 5);
 alter table public.workouts add column if not exists client_feedback text check (length(client_feedback) <= 1000);
+
+-- =====================================================================
+-- MUSCLES WORKED + CLIENT NOTE PER EXERCISE
+-- =====================================================================
+-- Coach's own pick of muscles for the body map (null = use the animation's muscles).
+alter table public.exercises add column if not exists muscles text[];
+-- A client's note to the coach about one exercise in one workout ("felt it in my lower back").
+create table if not exists public.item_notes (
+  workout_item_id uuid primary key references public.workout_items(id) on delete cascade,
+  client_id       uuid not null references public.profiles(id) on delete cascade,
+  note            text not null check (length(note) between 1 and 1000),
+  updated_at      timestamptz not null default now()
+);
+alter table public.item_notes enable row level security;
+drop policy if exists "client owns item notes" on public.item_notes;
+create policy "client owns item notes" on public.item_notes for all
+  using (client_id = auth.uid())
+  with check (client_id = auth.uid() and exists (
+    select 1 from public.workout_items wi join public.workouts w on w.id = wi.workout_id
+    where wi.id = workout_item_id and w.client_id = auth.uid()));
+drop policy if exists "coach reads item notes" on public.item_notes;
+create policy "coach reads item notes" on public.item_notes for select using (public.coaches(client_id));

@@ -36,7 +36,7 @@ function seed() {
     ],
     exercises: [], workouts: [], workout_items: [], set_logs: [], activities: [], body_metrics: [],
     food_logs: [], custom_foods: [], messages: [], challenge_completions: [], checkins: [], progress_photos: [],
-    health_screens: [], coach_notes: [], workout_templates: [], water_logs: [],
+    health_screens: [], coach_notes: [], workout_templates: [], water_logs: [], item_notes: [],
   };
   const ex = (name, muscle_group, equipment, cues, instructions) => { const e = { id: uid(), trainer_id: TRAINER, name, muscle_group, equipment, cues, instructions, video_path: null, categories: [], created_at: at(-60) }; db.exercises.push(e); return e; };
   const squat = ex("Goblet squat", "Legs", ["Kettlebell"], ["Chest up, elbows inside knees", "Sit between your heels", "Drive through the middle of your foot", "Breathe out as you stand"], "Hold the bell at your chest. Feet just wider than hips, toes slightly out.");
@@ -147,6 +147,10 @@ function expand(table, row, sel) {
     const items = db.workout_items.filter((i) => i.workout_id === row.id);
     r.workout_items = sel.includes("workout_items(count)") ? [{ count: items.length }]
       : items.map((i) => ({ ...i, ...(sel.includes("exercises(") ? { exercises: db.exercises.find((e) => e.id === i.exercise_id) } : {}) }));
+  }
+  if (table === "item_notes" && sel.includes("workout_items")) {
+    const it = db.workout_items.find((i) => i.id === row.workout_item_id);
+    r.workout_items = it ? { workout_id: it.workout_id, exercises: { name: db.exercises.find((x) => x.id === it.exercise_id)?.name } } : null;
   }
   if (table === "set_logs" && sel.includes("workout_items")) {
     const it = db.workout_items.find((i) => i.id === row.workout_item_id);
