@@ -36,7 +36,7 @@ function seed() {
     ],
     exercises: [], workouts: [], workout_items: [], set_logs: [], activities: [], body_metrics: [],
     food_logs: [], custom_foods: [], messages: [], challenge_completions: [], checkins: [], progress_photos: [],
-    health_screens: [], coach_notes: [], workout_templates: [], water_logs: [], item_notes: [],
+    health_screens: [], coach_notes: [], workout_templates: [], water_logs: [], item_notes: [], workout_folders: [],
   };
   const ex = (name, muscle_group, equipment, cues, instructions) => { const e = { id: uid(), trainer_id: TRAINER, name, muscle_group, equipment, cues, instructions, video_path: null, categories: [], created_at: at(-60) }; db.exercises.push(e); return e; };
   const squat = ex("Goblet squat", "Legs", ["Kettlebell"], ["Chest up, elbows inside knees", "Sit between your heels", "Drive through the middle of your foot", "Breathe out as you stand"], "Hold the bell at your chest. Feet just wider than hips, toes slightly out.");
@@ -135,9 +135,10 @@ const DEFAULTS = {
   food_logs: () => ({ log_date: localIso(new Date()), created_at: new Date().toISOString() }),
   body_metrics: () => ({ metric_date: localIso(new Date()), created_at: new Date().toISOString() }),
   challenge_completions: () => ({ created_at: new Date().toISOString() }),
-  workouts: () => ({ created_at: new Date().toISOString(), completed_at: null }),
+  workouts: () => ({ created_at: new Date().toISOString(), updated_at: new Date().toISOString(), completed_at: null }),
   exercises: () => ({ created_at: new Date().toISOString(), cues: [], equipment: [] }),
-  workout_templates: () => ({ created_at: new Date().toISOString(), items: [] }),
+  workout_templates: () => ({ created_at: new Date().toISOString(), updated_at: new Date().toISOString(), items: [], folder_id: null }),
+  workout_folders: () => ({ created_at: new Date().toISOString() }),
 };
 
 // Attach related rows the way Supabase's nested selects do.
@@ -191,7 +192,7 @@ class Query {
         const full = { id: uid(), ...(DEFAULTS[this.t]?.() || {}), ...row }; T.push(full); return full;
       });
     } else if (this.op === "update") {
-      out = T.filter(match); out.forEach((r) => Object.assign(r, this.vals));
+      out = T.filter(match); out.forEach((r) => Object.assign(r, this.vals, ["workouts", "workout_templates"].includes(this.t) ? { updated_at: new Date().toISOString() } : {}));
     } else if (this.op === "delete") {
       out = T.filter(match); db[this.t] = T.filter((r) => !match(r));
     } else {

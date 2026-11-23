@@ -731,3 +731,48 @@ create policy "client owns item notes" on public.item_notes for all
     where wi.id = workout_item_id and w.client_id = auth.uid()));
 drop policy if exists "coach reads item notes" on public.item_notes;
 create policy "coach reads item notes" on public.item_notes for select using (public.coaches(client_id));
+
+-- =====================================================================
+-- WORKOUT FOLDERS, EDIT DATES, RICHER EXERCISE RECORDS
+-- =====================================================================
+-- Coach's own folders for master workouts (Glute programmes, Beginners...). Client folders are automatic:
+-- a client's folder is simply their own workouts. Deleting a folder never deletes workouts: they move to General.
+create table if not exists public.workout_folders (
+  id          uuid primary key default gen_random_uuid(),
+  trainer_id  uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  name        text not null check (length(btrim(name)) between 1 and 60),
+  created_at  timestamptz not null default now()
+);
+alter table public.workout_folders enable row level security;
+drop policy if exists "coach owns folders" on public.workout_folders;
+create policy "coach owns folders" on public.workout_folders for all
+  using (trainer_id = auth.uid() and public.is_trainer())
+  with check (trainer_id = auth.uid() and public.is_trainer());
+alter table public.workout_templates add column if not exists folder_id uuid references public.workout_folders(id) on delete set null;
+alter table public.workout_templates add column if not exists updated_at timestamptz not null default now();
+alter table public.workouts add column if not exists updated_at timestamptz not null default now();
+create or replace function public.touch_updated_at() returns trigger language plpgsql as $$
+begin new.updated_at := now(); return new; end $$;
+drop trigger if exists touch_templates on public.workout_templates;
+create trigger touch_templates before update on public.workout_templates for each row execute function public.touch_updated_at();
+drop trigger if exists touch_workouts on public.workouts;
+create trigger touch_workouts before update on public.workouts for each row execute function public.touch_updated_at();
+-- A folder must belong to the same coach as the workout filed in it.
+create or replace function public.check_template_folder() returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.folder_id is not null and not exists (select 1 from public.workout_folders f where f.id = new.folder_id and f.trainer_id = new.trainer_id) then
+    raise exception 'Folder not found';
+  end if;
+  return new;
+end $$;
+drop trigger if exists check_template_folder on public.workout_templates;
+create trigger check_template_folder before insert or update of folder_id on public.workout_templates for each row execute function public.check_template_folder();
+
+-- Exercise record: secondary muscles, demo model, easier/harder options and modifications.
+alter table public.exercises add column if not exists muscles2 text[];
+alter table public.exercises add column if not exists model text check (model is null or model in ('female', 'male'));
+alter table public.exercises add column if not exists easier text check (length(easier) <= 500);
+alter table public.exercises add column if not exists harder text check (length(harder) <= 500);
+alter table public.exercises add column if not exists modifications text check (length(modifications) <= 1000);
+alter table public.exercises add column if not exists easier_id uuid references public.exercises(id) on delete set null;
+alter table public.exercises add column if not exists harder_id uuid references public.exercises(id) on delete set null;

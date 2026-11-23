@@ -409,7 +409,7 @@ async function route() {
     tabs([["dash", "home", "Today"], ["clients", "clients", "Clients"], ["library", "library", "Exercises"], ["workouts", "train", "Workouts"], ["inbox", "chat", "Chat", badge]]);
     const views = { dash: trainerDash, clients: trainerClients, client: () => trainerClient(a), photos: () => photosView(a),
       builder: () => builder({ kind: "client", clientId: a, id: b }), wb: () => builder({ kind: "template", id: a === "new" ? null : a }),
-      workouts: workoutLibrary, templates: workoutLibrary, template: () => assignView(a), assign: () => assignView(a, b),
+      workouts: () => workoutLibrary(), templates: () => workoutLibrary(), folder: () => workoutLibrary("folder", a), cfolder: () => workoutLibrary("cfolder", a), template: () => assignView(a), assign: () => assignView(a, b),
       library: trainerLibrary, exercise: () => exerciseEditor(a), inbox: trainerInbox, chat: () => chatView(a), me: profileView };
     return (views[page] || trainerDash)();
   }
@@ -1068,7 +1068,8 @@ async function sessionView(id, startAt) {
       <h1 style="margin-top:6px">${esc(ex.name)}</h1>
       <p class="muted" style="margin:-2px 0 8px">${esc([...new Set([catOf(ex), ex.muscle_group].filter(Boolean))].join(", "))}${(ex.equipment || []).length ? `. ${(ex.equipment || []).map(esc).join(", ")}` : ""}</p>
       <div class="sess-demo" id="demo">${demoHtml(ex, d.urls?.[ex.video_path]) || `<div class="empty">No demo yet. Ask your coach for a video.</div>`}</div>
-      <button type="button" class="small ghost" id="replay">Replay demo</button>
+      <div class="row" style="gap:8px">${d.urls?.[ex.video_path] || ex.video_url ? `<button type="button" class="small ghost" id="replay">Replay video</button>` : ""}
+        ${ex.instructions || ex.cues?.length || ex.easier || ex.harder || ex.modifications ? `<button type="button" class="small ghost" id="howBtn">Instructions</button>` : ""}</div>
       ${musclesHtml(ex)}
       <div class="sess-target"><b>${esc(targetText(it))}</b>${it.notes ? `<div class="coach-note-inline">${esc(it.notes)}</div>` : ""}</div>
       ${ready ? `<div class="nudge">${ICON.up} You hit every rep at ${topW} kg last time. If your form felt solid, try ${topW + (topW < 10 ? 1 : 2)} kg today.</div>` : ""}
@@ -1078,8 +1079,8 @@ async function sessionView(id, startAt) {
       <div class="card inote"><label for="iNote" style="margin-top:0">Note for your coach about this exercise</label>
         <textarea id="iNote" maxlength="1000" placeholder="Optional, e.g. felt it in my lower back on set 3, or the weight was too light">${esc(notes[it.id] || "")}</textarea>
         <p class="muted" id="iNoteSt" style="margin:4px 0 0">${notes[it.id] ? "Saved. Your coach can see it." : "Saves automatically. Your coach sees it with this workout."}</p></div>
-      ${ex.instructions || ex.cues?.length ? `<details class="card how" ${hist.length ? "" : "open"}><summary>How to do it</summary>${ex.instructions ? `<p>${esc(ex.instructions)}</p>` : ""}
-        ${ex.cues?.length ? `<ul class="tips">${ex.cues.map((c) => `<li>${esc(c)}</li>`).join("")}</ul>` : ""}</details>` : ""}
+      ${ex.instructions || ex.cues?.length || ex.easier || ex.harder || ex.modifications ? `<details class="card how" id="how" ${hist.length ? "" : "open"}><summary>How to do it</summary>${ex.instructions ? `<p>${esc(ex.instructions)}</p>` : ""}
+        ${ex.cues?.length ? `<ul class="tips">${ex.cues.map((c) => `<li>${esc(c)}</li>`).join("")}</ul>` : ""}${variationsHtml(ex, lib)}</details>` : ""}
       ${hist.length ? `<details class="card"><summary>Your history (${hist.length} ${hist.length === 1 ? "session" : "sessions"})</summary>
         ${hist.slice(0, 8).map((h) => `<div class="hist"><span class="muted">${fmtDate(h.date)}</span><span>${h.sets.map(setLabel).join(", ")}</span></div>`).join("")}</details>` : ""}
       ${swapHtml(swapSuggestions(ex, lib || [], me.equipment))}
@@ -1159,7 +1160,8 @@ async function sessionView(id, startAt) {
       c.querySelector("[data-done]").setAttribute("aria-pressed", "false"); c.querySelector("[data-done]").dataset.done = n; c.querySelector("[data-work]")?.remove();
       last.after(c); bind(it, nextIt, timed);
     };
-    $("#replay").onclick = () => {
+    $("#howBtn")?.addEventListener("click", () => { const h = $("#how"); h.open = true; h.scrollIntoView({ block: "start", behavior: "smooth" }); });
+    if ($("#replay")) $("#replay").onclick = () => {
       const v = $("#demo video"); if (v) { v.currentTime = 0; v.play?.(); return; }
       const f = $("#demo iframe"); if (f) { f.src = f.src; return; }
       $("#demo").innerHTML = demoHtml(it.exercises, null); startMoves($("#demo"));
@@ -1254,7 +1256,19 @@ function demoHtml(ex, url, opts = {}) {
   if (url) return `<video src="${esc(url)}" controls playsinline preload="metadata" loop muted></video>`;
   if (ex.video_url) return linkHtml(ex.video_url, `${ex.name} demo`);
   const mv = moveFor(ex);
-  return mv ? moveSvg(mv, { props: (ex.equipment || []).length > 0, big: true, ...opts }) : "";
+  return mv ? moveSvg(mv, { props: (ex.equipment || []).length > 0, big: true, model: ex.model || "female", muscles: ex.muscles?.length ? musclesFor(ex, mv) : null, ...opts }) : "";
+}
+// Options list of library exercises for "easier / harder" links.
+function exOptions(lib, selected, selfId) {
+  return `<option value="">None</option>${sortBy((lib || []).filter((x) => x.id !== selfId), "name").map((x) => `<option value="${x.id}" ${x.id === selected ? "selected" : ""}>${esc(x.name)}</option>`).join("")}`;
+}
+// Easier / harder / modifications block for clients.
+function variationsHtml(ex, lib = [], linkBase = "") {
+  const nm = (eid) => (lib || []).find((x) => x.id === eid)?.name;
+  const line = (label, eid, note) => { const n = eid && nm(eid); if (!n && !note) return "";
+    return `<li><b>${label}:</b> ${n ? (linkBase ? `<a href="${linkBase}${eid}">${esc(n)}</a>` : esc(n)) : ""}${n && note ? ". " : ""}${note ? esc(note) : ""}</li>`; };
+  const items = line("Easier", ex.easier_id, ex.easier) + line("Harder", ex.harder_id, ex.harder) + (ex.modifications ? `<li><b>Modifications:</b> ${esc(ex.modifications)}</li>` : "");
+  return items ? `<div class="vars"><b>Make it work for you</b><ul class="tips">${items}</ul></div>` : "";
 }
 // Body map of the muscles this exercise works (coach's own picks first, then the animation's, then the muscle group).
 function musclesHtml(ex, opts = {}) { const m = musclesFor(ex, moveFor(ex)); return m[0].length ? muscleMapSvg(m, opts) : ""; }
@@ -1309,12 +1323,15 @@ async function clientExercise(id) {
   const [{ data: ex }, { data: lib }] = await Promise.all([
     sb.from("exercises").select("*").eq("id", id).single(), sb.from("exercises").select("id,name,muscle_group,equipment")]);
   if (!ex) return render(`<div class="empty">Exercise not found.</div>`);
+  const linked = [ex.easier_id, ex.harder_id].filter(Boolean);
+  const { data: varLib } = linked.length ? await sb.from("exercises").select("id,name").in("id", linked) : { data: [] };
   const url = await videoUrl(ex.video_path);
   render(`<button class="back" onclick="history.back()">← Library</button>
     <div class="card ex-card"><div class="row between"><h1>${esc(ex.name)}</h1><span class="chip">${esc(ex.muscle_group)}</span></div>
       ${demoHtml(ex, url) || `<div class="empty">No demo yet.</div>`}${musclesHtml(ex)}
       <p class="muted">Equipment: ${(ex.equipment || []).map(esc).join(", ") || "Bodyweight"}</p>
       ${ex.cues?.length ? `<div class="cues"><b>Form cues</b><ul>${ex.cues.map((c) => `<li>${esc(c)}</li>`).join("")}</ul></div>` : ""}
+      ${variationsHtml(ex, varLib, "#/exercise/")}
       ${swapHtml(swapSuggestions(ex, lib || [], me.equipment))}
       ${ex.instructions ? `<h3 style="margin-top:14px">How to</h3><p>${esc(ex.instructions)}</p>` : ""}</div>`);
 }
@@ -2297,12 +2314,16 @@ async function builder({ kind, id, clientId }) {
     id ? (isTpl ? sb.from("workout_templates").select("*").eq("id", id).single() : sb.from("workouts").select("*, workout_items(*)").eq("id", id).single()) : Promise.resolve({ data: null }),
     sb.from("workout_templates").select("*").order("name"),
   ]);
+  const [{ data: folders0 }, { data: myClients }] = await Promise.all([sb.from("workout_folders").select("*").order("name"),
+    isTpl ? sb.from("profiles").select("id, full_name").eq("trainer_id", me.id).order("full_name") : Promise.resolve({ data: [] })]);
+  let folders = folders0 || [];
   const c = cRes.data, w = wRes.data;
   const cNotes = {};
   if (!isTpl && w?.workout_items?.length) { const { data: ns } = await sb.from("item_notes").select("workout_item_id,note").in("workout_item_id", w.workout_items.map((i) => i.id)); (ns || []).forEach((n) => (cNotes[n.workout_item_id] = n.note)); }
   if ((id && !w) || (!isTpl && !c)) return render(`<div class="empty">Workout not found.</div>`);
   let items = (isTpl ? (w?.items || []) : (w?.workout_items || []).sort((a, b) => a.position - b.position)).map((i) => ({ ...i, section: sectionOf(i) }));
   let fromTpl = !isTpl ? w?.template_id || null : null;
+  const pendingFolder = isTpl && !w ? (sessionStorage.getItem("or-new-folder") || "") : ""; sessionStorage.removeItem("or-new-folder");
   const src = fromTpl ? (templates || []).find((t) => t.id === fromTpl) : null;
   const exOf = (it) => lib.find((x) => x.id === it.exercise_id) || { name: "Removed exercise", equipment: [], muscle_group: "" };
   const owned = c?.equipment || null;
@@ -2318,7 +2339,7 @@ async function builder({ kind, id, clientId }) {
         <span class="thumb">${mv ? moveSvg(mv, { label: false, props: (ex.equipment || []).length > 0 }) : ""}</span>
         <div class="grow"><b>${n}. ${esc(ex.name)}</b><div class="muted">${esc([...new Set([catOf(ex), ex.muscle_group].filter(Boolean))].join(", "))}${need.length ? `, <span style="color:var(--warn)">needs ${esc(need.join(", "))}</span>` : ""}</div></div></div>
       ${owned && need.length ? swapHtml(swapSuggestions(ex, lib, owned)) : ""}
-      <div class="grid5">${FIELDS.map(([k, l, m]) => `<div><label>${l}</label><input data-k="${k}" type="number" inputmode="${m}" ${k === "target_weight_kg" ? 'step="0.5"' : 'min="0"'} value="${it[k] ?? ""}"></div>`).join("")}</div>
+      <div class="grid5">${FIELDS.map(([k, l, m]) => `<div><label>${l}</label><input data-k="${k}" type="number" inputmode="${m}" step="any" min="0" value="${it[k] ?? ""}" aria-label="${l}"></div>`).join("")}</div>
       ${it.id && cNotes[it.id] ? `<p class="fb-note client-said"><b>${esc(who)} said:</b> "${esc(cNotes[it.id])}"</p>` : ""}
       <label>Note for this exercise</label><input data-k="notes" value="${esc(it.notes)}" placeholder="e.g. Slow on the way down">
       <div class="row" style="gap:8px;margin-top:10px"><button type="button" class="small secondary" data-rep="${i}">Replace</button><button type="button" class="small ghost" data-rm="${i}">Remove</button></div></div>`;
@@ -2331,7 +2352,7 @@ async function builder({ kind, id, clientId }) {
         <div class="build-list" data-sec="${sec.key}">${list.map(([it, i], n) => itemHtml(it, i, n + 1)).join("") || `<p class="muted drop-hint">${sec.hint} Add exercises, or drag one here.</p>`}</div>
         <button type="button" class="secondary block" data-add="${sec.key}">${ICON.plus} Add to ${sec.key.toLowerCase()}</button></section>`;
     }).join("");
-    startMoves($("#sections"));
+    startMoves($("#sections")); builderDraft?.();
     $("#sum").textContent = items.length ? `${items.length} ${items.length === 1 ? "exercise" : "exercises"}, about ${estMinutes(items)} minutes` : "No exercises yet. Add some to each section below.";
     $$("#sections [data-k]").forEach((inp) => (inp.oninput = () => {
       const i = inp.closest("[data-i]").dataset.i; const k = inp.dataset.k;
@@ -2365,10 +2386,14 @@ async function builder({ kind, id, clientId }) {
     <h1>${isTpl ? (w ? "Edit workout" : "Create workout") : `${w ? "Edit" : "New"} workout for ${esc(who)}`}</h1>
     ${src ? `<p class="muted">Based on your saved workout "${esc(src.name)}". Changes here only change ${esc(who)}'s copy, not the saved workout or anyone else's.</p>` : ""}
     ${isTpl && w ? `<p class="muted">Changes here update the saved workout. Workouts you've already given to clients stay as they are.</p>` : ""}
-    <form id="wf"><div class="card">
+    <div id="draftBar"></div>
+    <form id="wf" novalidate><div class="card">
       ${!w && (templates || []).length ? `<label for="tpl">Start from a saved workout</label><select id="tpl"><option value="">Start blank</option>${templates.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("")}</select>` : ""}
       <label for="wn">Workout name</label><input id="wn" name="name" required maxlength="120" value="${esc(w?.name || "")}" placeholder="e.g. Upper body, Glute focus, Full body, Core">
-      ${isTpl ? "" : `<div class="grid2"><div><label for="wd">Date</label><input id="wd" name="date" type="date" value="${w?.scheduled_date || today()}"></div><div></div></div>`}
+      ${isTpl ? `<label for="wfo">Save in</label><select id="wfo" name="folder">${folderOptions(folders, w?.folder_id || pendingFolder || "", !w ? myClients : [])}</select>
+        <p class="muted" id="wfoHint" style="margin:4px 0 0"></p>`
+        : `<div class="grid2"><div><label for="wd">Date</label><input id="wd" name="date" type="date" value="${w?.scheduled_date || today()}"></div><div></div></div>
+        <p class="muted" style="margin:4px 0 0">Saves in ${esc(who)}'s folder.</p>`}
       <label for="wno">Notes for the whole workout</label><textarea id="wno" name="notes" placeholder="Focus for today, how it should feel">${esc(w?.notes || "")}</textarea>
       ${c ? `<p class="muted" style="margin-top:8px">${esc(who)}'s equipment: ${(c.equipment || []).map(esc).join(", ") || "not set"}${c.weights_note ? `. Weights: ${esc(c.weights_note)}` : ""}</p>` : ""}
       <p class="muted" id="sum" style="margin:8px 0 0"></p></div>
@@ -2377,6 +2402,47 @@ async function builder({ kind, id, clientId }) {
     <div class="card build-bar"><button class="block" id="save">${isTpl ? (w ? "Save changes" : "Save to my workouts") : `Save ${esc(who)}'s workout`}</button>
       <div class="grid2" style="margin-top:10px"><button type="button" class="secondary" id="saveNew">${isTpl ? (w ? "Save as a new workout" : "Save and assign") : "Also save to my workouts"}</button>
       ${w ? `<button type="button" class="danger" id="del">Delete</button>` : `<button type="button" class="ghost" onclick="location.hash='${back}'">Cancel</button>`}</div></div></form>`);
+  // ---------- folder choice
+  const folderValue = () => { const v = $("#wfo")?.value || ""; return v && !v.startsWith("client:") && v !== "__new" ? v : null; };
+  const toClient = () => { const v = $("#wfo")?.value || ""; return v.startsWith("client:") ? v.slice(7) : null; };
+  const folderHint = () => { const h = $("#wfoHint"); if (!h) return; const cid = toClient();
+    h.innerHTML = cid ? `Saves as ${esc(firstName((myClients || []).find((x) => x.id === cid) || {}))}'s own workout, without a date. <label class="check" style="margin-top:6px"><input type="checkbox" id="keepMaster"><span>Also keep a master copy in my library</span></label>`
+      : "Master workout: assign it to clients from here or the library. Their copies can be changed without touching this one."; };
+  $("#wfo")?.addEventListener("change", async (e) => {
+    if (e.target.value === "__new") {
+      const name = (prompt("Name the new folder, e.g. Glute programmes") || "").trim().slice(0, 60);
+      if (!name) { e.target.value = folderValue() || ""; return; }
+      const { data, error } = await sb.from("workout_folders").insert({ trainer_id: me.id, name }).select().single();
+      if (fail(error)) { e.target.value = ""; return; }
+      folders = [...folders, data].sort((a, b) => a.name.localeCompare(b.name));
+      e.target.innerHTML = folderOptions(folders, data.id, !w ? myClients : []); toast(`Folder "${name}" created`);
+    }
+    folderHint(); saveDraftSoon();
+  });
+  folderHint();
+
+  // ---------- draft: saved on this phone as you build, so a refresh or a slip of the thumb loses nothing
+  const dKey = `or-draft-${me.id}-${isTpl ? "t" : "c"}-${id || "new"}-${clientId || ""}`;
+  const snapshot = () => { const f = $("#wf"); return { name: f.name.value, notes: f.notes.value, date: f.date?.value || null, folder: $("#wfo")?.value || "", items, fromTpl, at: Date.now() }; };
+  const original = JSON.stringify({ name: w?.name || "", notes: w?.notes || "", items: items.map(stripItem) });
+  // written straight away (it's tiny), so even leaving mid-word keeps everything
+  const saveDraftSoon = () => { if (!$("#wf")) return; try {
+    const s2 = snapshot(); if (JSON.stringify({ name: s2.name, notes: s2.notes || "", items: s2.items.map(stripItem) }) === original) return localStorage.removeItem(dKey);
+    localStorage.setItem(dKey, JSON.stringify(s2)); } catch {} };
+  const clearDraft = () => { builderDraft = null; try { localStorage.removeItem(dKey); } catch {} };
+  builderDraft = saveDraftSoon;
+  $("#wf").addEventListener("input", saveDraftSoon); $("#wf").addEventListener("change", saveDraftSoon);
+  let draft = null; try { draft = JSON.parse(localStorage.getItem(dKey) || "null"); } catch {}
+  if (draft && draft.items) {
+    const when = new Date(draft.at).toLocaleString("en-ZA", { weekday: "short", hour: "2-digit", minute: "2-digit" });
+    $("#draftBar").innerHTML = `<div class="card nudge draft"><b>Unsaved changes from ${esc(when)}</b><p class="muted" style="margin:2px 0 8px">${esc(draft.name || "Untitled workout")}, ${draft.items.length} ${draft.items.length === 1 ? "exercise" : "exercises"}.</p>
+      <div class="row" style="gap:8px"><button type="button" class="small" id="drUse">Restore</button><button type="button" class="small ghost" id="drNo">Discard</button></div></div>`;
+    $("#drUse").onclick = () => { const f = $("#wf"); items = draft.items.filter((i) => lib.some((x) => x.id === i.exercise_id)); fromTpl = draft.fromTpl || fromTpl;
+      f.name.value = draft.name || ""; f.notes.value = draft.notes || ""; if (f.date && draft.date) f.date.value = draft.date;
+      if ($("#wfo") && draft.folder && [...$("#wfo").options].some((o) => o.value === draft.folder)) $("#wfo").value = draft.folder; folderHint();
+      $("#draftBar").innerHTML = ""; draw(); toast("Draft restored"); };
+    $("#drNo").onclick = () => { clearDraft(); $("#draftBar").innerHTML = ""; };
+  }
   draw();
 
   $("#tpl")?.addEventListener("change", (e) => {
@@ -2387,20 +2453,43 @@ async function builder({ kind, id, clientId }) {
   });
   const ordered = () => SECTIONS.flatMap((sec) => items.filter((it) => it.section === sec.key));
   const check = () => {
-    const f = $("#wf"); if (!f.name.value.trim()) { f.name.focus(); toast("Give the workout a name"); return false; }
-    if (!items.length) { toast("Add at least one exercise"); return false; } return true;
+    const f = $("#wf"); $$("#wf .bad").forEach((x) => x.classList.remove("bad"));
+    const stop = (el, msg) => { el?.classList.add("bad"); el?.scrollIntoView({ block: "center", behavior: "smooth" }); el?.focus?.({ preventScroll: true }); toast(msg); return false; };
+    if (!f.name.value.trim()) return stop(f.name, "Give the workout a name at the top. Your exercises are still here.");
+    if (!items.length) return stop($("#sections [data-add]"), "Add at least one exercise, then save.");
+    const WHOLE = { target_sets: "Sets", target_reps: "Reps", target_seconds: "Secs", rest_seconds: "Rest" };
+    const list = ordered();
+    for (let n = 0; n < list.length; n++) {
+      const it = list[n]; const i = items.indexOf(it); const card = $(`#sections .build-item[data-i="${i}"]`);
+      for (const [k, label] of Object.entries(WHOLE)) {
+        const v = it[k]; if (v == null) continue;
+        if (!Number.isFinite(v) || v < 0 || !Number.isInteger(v)) return stop(card?.querySelector(`[data-k="${k}"]`) || card, `Exercise ${n + 1} (${exOf(it).name}): ${label} must be a whole number, like 10.`);
+      }
+      const kg = it.target_weight_kg; if (kg != null && (!Number.isFinite(kg) || kg < 0 || kg > 500)) return stop(card?.querySelector('[data-k="target_weight_kg"]') || card, `Exercise ${n + 1} (${exOf(it).name}): check the kg.`);
+    }
+    // a box the phone could not read (e.g. "10-12" typed into a number box)
+    const unread = $$("#sections input[type=number]").find((x) => x.validity.badInput);
+    if (unread) return stop(unread, "One number box has something it can't read. Use a single number, e.g. 10, and put ranges like 8-12 in the exercise note.");
+    return true;
   };
   const saveTemplate = async (name, existingId) => {
-    const f = $("#wf"); const row = { trainer_id: me.id, name: name.trim().slice(0, 120), notes: f.notes.value || null, items: ordered().map(stripItem) };
+    const f = $("#wf"); const row = { trainer_id: me.id, name: name.trim().slice(0, 120), notes: f.notes.value || null, items: ordered().map(stripItem), folder_id: folderValue() };
     const { data, error } = existingId ? await sb.from("workout_templates").update(row).eq("id", existingId).select().single()
       : await sb.from("workout_templates").insert(row).select().single();
     return fail(error) ? null : data;
   };
   $("#wf").onsubmit = async (e) => {
     e.preventDefault(); if (!check()) return; const f = e.target; const btn = $("#save"); btn.disabled = true;
+    if (isTpl && toClient()) {
+      const cid = toClient(); const cl = (myClients || []).find((x) => x.id === cid);
+      if ($("#keepMaster")?.checked) { const t = await saveTemplate(f.name.value); if (!t) { btn.disabled = false; return; } }
+      const ws = await saveClientCopy({ name: f.name.value, notes: f.notes.value, items: ordered() }, cid);
+      btn.disabled = false; if (!ws) return; clearDraft();
+      toast(`Saved in ${cl ? firstName(cl) : "the client"}'s folder`); return go("cfolder/" + cid);
+    }
     if (isTpl) {
       const t = await saveTemplate(f.name.value, w?.id); btn.disabled = false; if (!t) return;
-      toast(w ? "Changes saved" : "Saved to your workouts"); return go("workouts");
+      clearDraft(); toast(w ? "Changes saved" : "Saved to your workouts"); return go(t.folder_id ? "folder/" + t.folder_id : "workouts");
     }
     const list = ordered();
     const row = { trainer_id: me.id, client_id: clientId, name: f.name.value.trim(), scheduled_date: f.date.value || null, notes: f.notes.value || null, template_id: fromTpl };
@@ -2413,17 +2502,18 @@ async function builder({ kind, id, clientId }) {
     const payload = list.map((i, pos) => { const r = { ...stripItem(i), workout_id: saved.id, position: pos }; if (i.id) r.id = i.id; return r; });
     const existing = payload.filter((x) => x.id), fresh = payload.filter((x) => !x.id);
     if (existing.length) { const { error: ue } = await sb.from("workout_items").upsert(existing); if (fail(ue)) { btn.disabled = false; return; } }
-    if (fresh.length) { const { error: ie } = await sb.from("workout_items").insert(fresh); if (fail(ie)) { btn.disabled = false; return; } }
+    if (fresh.length) { const { error: ie } = await sb.from("workout_items").insert(fresh);
+      if (ie) { if (!w) await sb.from("workouts").delete().eq("id", saved.id); fail(ie); btn.disabled = false; toast("Couldn't save the exercises. Nothing was lost on this screen: try Save again."); return; } }
     if (!w && clientId !== me.id) await sb.from("messages").insert({ client_id: clientId, sender_id: me.id, body: `New workout ready: "${saved.name}"` });
-    toast(`Saved ${who}'s workout`); go("client/" + clientId);
+    clearDraft(); toast(`Saved ${who}'s workout`); go("client/" + clientId);
   };
   $("#saveNew").onclick = async () => {
     if (!check()) return;
     if (isTpl && w) {
       const name = prompt("Name for the new workout", `${$("#wf").name.value} (v2)`); if (!name) return;
-      const t = await saveTemplate(name); if (t) { toast(`Saved "${t.name}" as a new workout`); go("wb/" + t.id); }
+      const t = await saveTemplate(name); if (t) { clearDraft(); toast(`Saved "${t.name}" as a new workout`); go("wb/" + t.id); }
     } else if (isTpl) {
-      const t = await saveTemplate($("#wf").name.value); if (t) { toast("Saved. Now choose who gets it."); go("assign/" + t.id); }
+      const t = await saveTemplate($("#wf").name.value); if (t) { clearDraft(); history.replaceState(null, "", "#/wb/" + t.id); toast("Saved to your workouts. Now choose who gets it."); go("assign/" + t.id); }
     } else {
       const t = await saveTemplate($("#wf").name.value); if (t) toast(`Saved "${t.name}" to your workouts, ready for other clients`);
     }
@@ -2444,7 +2534,7 @@ async function exerciseEditor(id) {
   const ex = isNew ? { name: "", muscle_group: "Full body", equipment: [], cues: [], instructions: "", categories: [] }
     : (await sb.from("exercises").select("*").eq("id", id).single()).data;
   if (!ex) return render(`<div class="empty">Exercise not found.</div>`);
-  const { data: allTypes } = await sb.from("exercises").select("categories").eq("trainer_id", me.id);
+  const [{ data: allTypes }, lib] = await Promise.all([sb.from("exercises").select("categories").eq("trainer_id", me.id), myLibrary()]);
   const customTypes = [...new Set((allTypes || []).flatMap(typesOf))].filter((t) => !TYPES.includes(t)).sort();
   const url = await videoUrl(ex.video_path);
   render(`<button class="back" onclick="location.hash='#/library'">← Exercises</button>
@@ -2468,9 +2558,12 @@ async function exerciseEditor(id) {
       <label for="dm">Animated demo <span class="muted">(shown until you upload a video)</span></label>
       <select id="dm" name="dm">${[["", "Match automatically from the name"], ...Object.entries(MOVES).map(([k, m]) => [k, m.label]), ["none", "No animation"]]
         .map(([v, l]) => `<option value="${v}" ${(ex.demo_move || "") === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
+      <label for="mo">Demo model</label><select id="mo" name="mo">${[["female", "Female"], ["male", "Male"]].map(([v, l]) => `<option value="${v}" ${(ex.model || "female") === v ? "selected" : ""}>${l}</option>`).join("")}</select>
       <div id="dmPrev" class="dm-prev"></div>
-      <label>Muscles worked <span class="muted">(clients see these lit up on a body map. Leave blank to use the animation's muscles)</span></label>
-      <div id="mu">${Object.entries(MUSCLE_NAMES).map(([k, n]) => `<span class="chip ${(ex.muscles || []).includes(k) ? "on" : ""}" data-m="${k}" role="button">${n}</span>`).join("")}</div>
+      <label>Muscles worked <span class="muted">(tap once for a main muscle, twice for a supporting muscle, again to clear. Leave blank to use the animation's muscles)</span></label>
+      <div id="mu">${Object.entries(MUSCLE_NAMES).map(([k, n]) => { const st = (ex.muscles || []).includes(k) ? "p" : (ex.muscles2 || []).includes(k) ? "s" : "";
+        return `<span class="chip mchip ${st}" data-m="${k}" data-st="${st}" role="button" aria-label="${n}${st === "p" ? ", main" : st === "s" ? ", supporting" : ""}">${n}</span>`; }).join("")}</div>
+      <p class="muted" style="margin:4px 0 0"><span class="mm-dot p"></span>Main <span class="mm-dot s" style="margin-left:10px"></span>Supporting</p>
       <div id="muPrev"></div>
       <label for="vu">Video link <span class="muted">(YouTube, Vimeo or Instagram. Clients see it instead of the animation)</span></label>
       <div class="row" style="gap:8px"><input id="vu" name="vu" type="url" inputmode="url" placeholder="Paste a YouTube link" value="${esc(ex.video_url || "")}" style="flex:1;min-width:0">
@@ -2482,6 +2575,14 @@ async function exerciseEditor(id) {
       <input type="file" name="video" accept="video/*">
       <p class="muted">Tip: film landscape or square, 10–20 seconds, side-on angle, max 100 MB.</p>
       <label>How to (setup & steps)</label><textarea name="ins">${esc(ex.instructions)}</textarea>
+      <h3 style="margin:16px 0 4px">Easier, harder and modifications</h3>
+      <p class="muted" style="margin:0 0 6px">Clients see these under the exercise. Link another exercise from your library, add a short note, or both.</p>
+      <div class="grid2"><div><label for="ezId">Easier option</label><select id="ezId" name="ezId">${exOptions(lib, ex.easier_id, id)}</select></div>
+        <div><label for="hzId">Harder option</label><select id="hzId" name="hzId">${exOptions(lib, ex.harder_id, id)}</select></div></div>
+      <div class="grid2"><div><input name="ez" maxlength="500" placeholder="e.g. Hands on a bench" aria-label="Easier option note" value="${esc(ex.easier || "")}"></div>
+        <div><input name="hz" maxlength="500" placeholder="e.g. Add a 2-second pause" aria-label="Harder option note" value="${esc(ex.harder || "")}"></div></div>
+      <label for="mods">Modifications <span class="muted">(injuries, pregnancy, no equipment)</span></label>
+      <textarea id="mods" name="mods" maxlength="1000" placeholder="e.g. Sore knees: reduce depth. No bench: use a sturdy chair.">${esc(ex.modifications || "")}</textarea>
       <div class="row between" style="margin-top:10px"><label style="margin:0">Coaching cues <span class="muted">(one per line)</span></label>
         <button type="button" class="small secondary" id="ai">Draft with AI</button></div>
       <textarea name="cues" style="min-height:120px" placeholder="Keep your back flat&#10;Drive through your heels">${esc((ex.cues || []).join("\n"))}</textarea>
@@ -2507,13 +2608,16 @@ async function exerciseEditor(id) {
   $("#tyNew").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("#tyAdd").click(); } });
   const preview = () => {
     const f = $("#ef"); const mv = moveFor({ name: f.name.value, demo_move: f.dm.value || null });
-    $("#dmPrev").innerHTML = mv ? moveSvg(mv, { label: false, big: true, props: $$("#eq .chip.on").length > 0 }) + `<p class="muted" style="margin:6px 0 0">${esc(MOVES[mv].label)}${f.dm.value ? "" : ", matched from the name"}</p>`
+    const own = $$("#mu .chip.p").map((c) => c.dataset.m);
+    $("#dmPrev").innerHTML = mv ? moveSvg(mv, { label: false, big: true, props: $$("#eq .chip.on").length > 0, model: f.mo.value, muscles: own.length ? [own, $$("#mu .chip.s").map((c) => c.dataset.m)] : null }) + `<p class="muted" style="margin:6px 0 0">${esc(MOVES[mv].label)}${f.dm.value ? "" : ", matched from the name"}</p>`
       : `<p class="muted" style="margin:0">No animation. Choose one above, or upload a video.</p>`;
     startMoves($("#dmPrev"));
-    const picked = $$("#mu .chip.on").map((c) => c.dataset.m);
-    $("#muPrev").innerHTML = musclesHtml({ name: f.name.value, demo_move: f.dm.value || null, muscle_group: f.mg.value, muscles: picked }) || `<p class="muted">Pick the muscles, or choose an animation above.</p>`;
+    const picked = $$("#mu .chip.p").map((c) => c.dataset.m), picked2 = $$("#mu .chip.s").map((c) => c.dataset.m);
+    $("#muPrev").innerHTML = musclesHtml({ name: f.name.value, demo_move: f.dm.value || null, muscle_group: f.mg.value, muscles: picked, muscles2: picked2, model: f.mo.value }) || `<p class="muted">Pick the muscles, or choose an animation above.</p>`;
   };
-  $$("#mu .chip").forEach((c) => (c.onclick = () => { c.classList.toggle("on"); preview(); }));
+  $$("#mu .chip").forEach((c) => (c.onclick = () => { const nx = { "": "p", p: "s", s: "" }[c.dataset.st || ""]; c.dataset.st = nx; c.classList.remove("p", "s"); if (nx) c.classList.add(nx);
+    c.setAttribute("aria-label", c.textContent + (nx === "p" ? ", main" : nx === "s" ? ", supporting" : "")); preview(); }));
+  $("#ef").mo.onchange = preview;
   $("#dm").onchange = preview; $("#ef").name.addEventListener("input", preview); $$("#eq .chip").forEach((c) => c.addEventListener("click", preview)); preview();
   $("#ai").onclick = async () => {
     const f = $("#ef"); if (!f.name.value) return toast("Add the exercise name first");
@@ -2549,8 +2653,10 @@ async function exerciseEditor(id) {
       instructions: f.ins.value || null, cues: f.cues.value.split("\n").map((s) => s.trim()).filter(Boolean), video_path,
       reward_streak: f.rw.value ? Number(f.rw.value) : null, categories: $$("#ty .chip.on").map((c) => c.dataset.t), demo_move: f.dm.value || null,
       level: f.lv.value, tags: $$("#gf .chip.on").map((c) => c.dataset.g), video_url: f.vu.value.trim() ? cleanUrl(f.vu.value) : null,
-      muscles: $$("#mu .chip.on").map((c) => c.dataset.m) };
-    if (!row.muscles.length) row.muscles = null;
+      muscles: $$("#mu .chip.p").map((c) => c.dataset.m), muscles2: $$("#mu .chip.s").map((c) => c.dataset.m), model: f.mo.value,
+      easier: f.ez.value.trim() || null, harder: f.hz.value.trim() || null, modifications: f.mods.value.trim() || null, easier_id: f.ezId.value || null, harder_id: f.hzId.value || null };
+    if (!row.muscles.length) { row.muscles = null; row.muscles2 = row.muscles2.length ? row.muscles2 : null; }
+    if (row.muscles2 && !row.muscles2.length) row.muscles2 = null;
     if (f.vu.value.trim() && !row.video_url) { btn.disabled = false; return toast("That video link doesn't look right. Copy it from the Share button."); }
     const { error } = isNew ? await sb.from("exercises").insert(row) : await sb.from("exercises").update(row).eq("id", id);
     btn.disabled = false; btn.textContent = "Save to library";
@@ -2562,12 +2668,14 @@ async function exerciseEditor(id) {
 async function assignTemplate(t, clientId, start, weeks = 1, notify = true) {
   const made = [];
   for (let k = 0; k < weeks; k++) {
-    const d = new Date(start); d.setDate(d.getDate() + 7 * k);
+    const d = start ? new Date(start) : null; d?.setDate(d.getDate() + 7 * k);
     const { data: wk, error } = await sb.from("workouts").insert({ trainer_id: me.id, client_id: clientId, name: weeks > 1 ? `${t.name} (week ${k + 1})` : t.name,
-      scheduled_date: d.toISOString().slice(0, 10), notes: t.notes || null, template_id: t.id }).select().single();
+      scheduled_date: d ? d.toISOString().slice(0, 10) : null, notes: t.notes || null, template_id: t.id || null }).select().single();
     if (fail(error)) return made;
-    const { error: ie } = await sb.from("workout_items").insert((t.items || []).map((i, pos) => ({ ...stripItem(i), section: sectionOf(i), workout_id: wk.id, position: pos })));
-    if (fail(ie)) return made;
+    const rows = (t.items || []).map((i, pos) => ({ ...stripItem(i), section: sectionOf(i), workout_id: wk.id, position: pos }));
+    const { error: ie } = rows.length ? await sb.from("workout_items").insert(rows) : { error: null };
+    // never leave a workout without its exercises: undo the empty workout if the exercises didn't save
+    if (ie) { await sb.from("workouts").delete().eq("id", wk.id); fail(ie); return made; }
     made.push(wk);
   }
   if (notify && made.length && clientId !== me.id) await sb.from("messages").insert({ client_id: clientId, sender_id: me.id,
@@ -2575,47 +2683,186 @@ async function assignTemplate(t, clientId, start, weeks = 1, notify = true) {
   return made;
 }
 
-async function workoutLibrary() {
-  const [{ data: tpls }, { data: used }, lib] = await Promise.all([
+// A copy of a workout in a client's folder, without a date (the coach schedules it later or the client picks it).
+async function saveClientCopy(t, clientId) { const ws = await assignTemplate({ ...t, id: t.id || null }, clientId, null, 1, false); return ws[0] || null; }
+let builderDraft = null;
+function folderOptions(folders, selected = "", clients = []) {
+  return `<option value="" ${selected ? "" : "selected"}>General library</option>
+    ${(folders || []).map((f) => `<option value="${f.id}" ${f.id === selected ? "selected" : ""}>${esc(f.name)}</option>`).join("")}
+    <option value="__new">+ New folder…</option>
+    ${(clients || []).length ? `<optgroup label="A client's folder (their own copy)">${clients.map((cl) => `<option value="client:${cl.id}">${esc(cl.id === me.id ? "Me (My training)" : cl.full_name)}</option>`).join("")}</optgroup>` : ""}`;
+}
+
+// ---------------------------------------------------------------- workout library with folders
+// Master workouts live in the General library or the coach's own folders. Every client has an automatic folder:
+// their own workouts. Copies are independent: changing one never changes the master or anyone else's copy.
+function sheetPick(title, options, onPick, note = "") {
+  document.body.insertAdjacentHTML("beforeend", `<div class="picker" id="sheet" role="dialog" aria-label="${esc(title)}"><div class="picker-box">
+    <div class="row between"><h2 style="margin:0">${esc(title)}</h2><button type="button" class="small" id="shX">Close</button></div>
+    ${note ? `<p class="muted">${esc(note)}</p>` : ""}
+    ${options.map((o) => `<button type="button" class="list-item sl-item" data-v="${esc(o.value)}"><div class="grow"><b>${esc(o.label)}</b>${o.sub ? `<div class="muted">${esc(o.sub)}</div>` : ""}</div></button>`).join("") || `<div class="empty">Nothing to choose yet.</div>`}</div></div>`);
+  const close = () => $("#sheet")?.remove();
+  $("#shX").onclick = close; $("#sheet").addEventListener("click", (e) => { if (e.target.id === "sheet") close(); });
+  $$("#sheet [data-v]").forEach((b) => (b.onclick = () => { close(); onPick(b.dataset.v); }));
+}
+const SORTS = [["name", "Name A–Z"], ["new", "Newest first"], ["edited", "Recently edited"]];
+const sortBy = (list, k) => [...list].sort(k === "name" ? (a, b) => a.name.localeCompare(b.name) : k === "new" ? (a, b) => (b.created_at || "").localeCompare(a.created_at || "")
+  : (a, b) => (b.updated_at || b.created_at || "").localeCompare(a.updated_at || a.created_at || ""));
+
+async function workoutLibrary(view = "home", arg = null) {
+  const [{ data: tpls }, { data: folders }, { data: clients }, { data: cws }, lib] = await Promise.all([
     sb.from("workout_templates").select("*").order("name"),
-    sb.from("workouts").select("template_id, client_id").not("template_id", "is", null),
+    sb.from("workout_folders").select("*").order("name"),
+    sb.from("profiles").select("id, full_name, equipment").eq("trainer_id", me.id).order("full_name"),
+    sb.from("workouts").select("id, name, client_id, scheduled_date, completed_at, created_at, updated_at, template_id, workout_items(count)").eq("trainer_id", me.id),
     myLibrary(),
   ]);
+  const T = tpls || [], F = folders || [], C = clients || [], W = cws || [];
   const exOf = (eid) => lib.find((x) => x.id === eid);
-  render(`<div class="row between"><h1>Workouts</h1><button class="small" onclick="location.hash='#/wb/new'">${ICON.plus} Create workout</button></div>
-    <p class="muted">Your saved workouts. Build once, assign to any client, and adjust a client's copy without touching the original.</p>
-    <input type="search" id="wq" placeholder="Search workouts" aria-label="Search workouts" style="margin-bottom:10px">
-    <div id="wl"></div>
-    <div class="card"><h3>How it works</h3><ol class="steps" style="margin:6px 0 0">
-      <li><b>Exercises:</b> your library of moves, each with a demo.</li><li><b>Create workout:</b> pick exercises, set sets, reps, rest and weight, then save.</li>
-      <li><b>Assign to client:</b> choose who and which day. It appears in their app.</li><li><b>Adjust:</b> open the client's copy to swap or tweak anything for them only.</li></ol></div>`);
+  const cName = (id) => (id === me.id ? "Me (My training)" : C.find((x) => x.id === id)?.full_name || "Client");
+  const fName = (id) => (id ? F.find((f) => f.id === id)?.name || "General library" : "General library");
+  const folder = view === "folder" ? (arg === "general" ? { id: "general", name: "General library" } : arg === "all" ? { id: "all", name: "All workouts" } : F.find((f) => f.id === arg)) : null;
+  const client = view === "cfolder" ? C.find((x) => x.id === arg) : null;
+  if ((view === "folder" && !folder) || (view === "cfolder" && !client)) return render(`<button class="back" onclick="location.hash='#/workouts'">Workouts</button><div class="empty">Folder not found.</div>`);
+  const sortKey = localStorage.getItem("or-wsort") || "name";
+  const head = view === "home" ? `<div class="row between"><h1>Workouts</h1><button class="small" id="wNew">${ICON.plus} Create workout</button></div>
+      <p class="muted">Master workouts in folders, plus a folder for every client with the workouts made for them.</p>`
+    : `<button class="back" onclick="location.hash='#/workouts'">All folders</button>
+      <div class="row between"><h1>${esc(client ? (client.id === me.id ? "My training" : client.full_name) : folder.name)}</h1>
+      ${folder && !["general", "all"].includes(folder.id) ? `<div class="row" style="gap:6px"><button class="small secondary" id="fRen">Rename</button><button class="small ghost" id="fDel">Delete</button></div>` : ""}</div>
+      ${client ? `<p class="muted">Every workout made for ${esc(firstName(client))}. Copies from your library can be changed here without touching the master.</p>`
+        : folder.id === "all" ? `<p class="muted">Every master workout and every client's workouts in one list.</p>` : `<p class="muted">Master workouts. Assign or copy them into any client's folder.</p>`}`;
+  const filterSel = view === "home" || folder?.id === "all" ? `<select id="wf2" aria-label="Filter by folder or client"><option value="">All folders</option><option value="f:general">General library</option>
+      ${F.map((f) => `<option value="f:${f.id}">${esc(f.name)}</option>`).join("")}<optgroup label="Clients">${C.map((cl) => `<option value="c:${cl.id}">${esc(cName(cl.id))}</option>`).join("")}</optgroup></select>` : "";
+  render(`${head}
+    <div class="wtools"><input type="search" id="wq" placeholder="Search workouts by name" aria-label="Search workouts">
+      <div class="grid2">${filterSel || "<div></div>"}<select id="ws" aria-label="Sort">${SORTS.map(([k, l]) => `<option value="${k}" ${k === sortKey ? "selected" : ""}>${l}</option>`).join("")}</select></div></div>
+    <div id="wDraft"></div><div id="wl"></div>
+    ${view === "home" ? `<div class="card"><h3>How it works</h3><ol class="steps" style="margin:6px 0 0">
+      <li><b>Create a workout</b> and choose where to save it: the General library, one of your folders, or straight into a client's folder.</li>
+      <li><b>Assign or copy</b> a master workout into a client's folder. Their copy is theirs: adjust it without changing the master.</li>
+      <li><b>Folders</b> are only for organising. Deleting a folder never deletes its workouts; they move to the General library.</li></ol></div>` : ""}`);
+
+  // unfinished workouts saved on this phone
+  const drafts = Object.keys(localStorage).filter((k) => k.startsWith(`or-draft-${me.id}-t-new`)).map((k) => { try { return [k, JSON.parse(localStorage.getItem(k))]; } catch { return null; } }).filter(Boolean);
+  if (drafts.length) $("#wDraft").innerHTML = drafts.map(([k, d]) => `<div class="card nudge draft row between"><div><b>Unfinished: ${esc(d.name || "Untitled workout")}</b><div class="muted">${d.items?.length || 0} exercises, not saved yet</div></div>
+    <div class="row" style="gap:6px"><button class="small" data-dr="${esc(k)}">Continue</button><button class="small ghost" data-drx="${esc(k)}">Discard</button></div></div>`).join("");
+  $$("[data-dr]").forEach((b) => (b.onclick = () => go("wb/new")));
+  $$("[data-drx]").forEach((b) => (b.onclick = () => { localStorage.removeItem(b.dataset.drx); b.closest(".card").remove(); }));
+
+  const used = (tid) => new Set(W.filter((u) => u.template_id === tid).map((u) => u.client_id)).size;
+  const tplCard = (t, showFolder) => {
+    const first = (t.items || []).map((i) => exOf(i.exercise_id)).filter(Boolean).slice(0, 4);
+    const secs = SECTIONS.map((sec) => [sec.key, (t.items || []).filter((i) => sectionOf(i) === sec.key).length]).filter(([, k]) => k).map(([k, v]) => `${v} ${k.toLowerCase()}`).join(", ");
+    const n = used(t.id);
+    return `<div class="card wk"><a href="#/wb/${t.id}" class="wk-head" style="color:inherit;text-decoration:none">
+        <div class="wk-thumbs">${first.map((x) => moveFor(x) ? `<span class="thumb">${moveSvg(moveFor(x), { animate: false, label: false, props: (x.equipment || []).length > 0 })}</span>` : "").join("")}</div>
+        <b>${esc(t.name)}</b><div class="muted">${showFolder ? `<span class="chip">${esc(fName(t.folder_id))}</span> ` : ""}${(t.items || []).length} exercises (${secs || "empty"}), about ${estMinutes(t.items)} min${n ? `. Given to ${n} ${n === 1 ? "client" : "clients"}` : ""}</div></a>
+      <div class="wk-actions"><button class="small" data-as="${t.id}">Assign</button><button class="small secondary" data-cp="${t.id}">Copy to a client</button>
+        <button class="small secondary" data-mv="${t.id}">Move</button><button class="small secondary" data-dup="${t.id}">Duplicate</button><button class="small ghost" data-dl="${t.id}">Delete</button></div></div>`;
+  };
+  const cwCard = (w, showClient) => `<div class="card wk"><a href="#/builder/${w.client_id}/${w.id}" class="wk-head" style="color:inherit;text-decoration:none">
+      <b>${esc(w.name)}</b><div class="muted">${showClient ? `<span class="chip">${esc(cName(w.client_id))}</span> ` : ""}${w.workout_items?.[0]?.count || 0} exercises${w.scheduled_date ? `, ${fmtDate(w.scheduled_date)}` : ", no date"}${w.template_id ? `, from "${esc(T.find((t) => t.id === w.template_id)?.name || "a master workout")}"` : ""}
+      ${w.completed_at ? ` <span class="chip good">Done ${fmtDate(w.completed_at)}</span>` : ""}</div></a>
+    <div class="wk-actions"><button class="small secondary" data-cc="${w.id}">Copy to another client</button><button class="small secondary" data-sm="${w.id}">Save to my library</button>
+      <button class="small ghost" data-cd="${w.id}">Delete</button></div></div>`;
+
   const draw = () => {
-    const q = $("#wq").value.toLowerCase(); const list = (tpls || []).filter((t) => t.name.toLowerCase().includes(q));
-    $("#wl").innerHTML = list.map((t) => {
-      const n = new Set((used || []).filter((u) => u.template_id === t.id).map((u) => u.client_id)).size;
-      const first = (t.items || []).map((i) => exOf(i.exercise_id)).filter(Boolean).slice(0, 4);
-      const secs = SECTIONS.map((sec) => [sec.key, (t.items || []).filter((i) => sectionOf(i) === sec.key).length]).filter(([, k]) => k).map(([k, v]) => `${v} ${k.toLowerCase()}`).join(", ");
-      return `<div class="card wk"><a href="#/wb/${t.id}" class="wk-head" style="color:inherit;text-decoration:none">
-          <div class="wk-thumbs">${first.map((x) => moveFor(x) ? `<span class="thumb">${moveSvg(moveFor(x), { label: false, props: (x.equipment || []).length > 0 })}</span>` : "").join("")}</div>
-          <b>${esc(t.name)}</b><div class="muted">${(t.items || []).length} exercises (${secs || "empty"}), about ${estMinutes(t.items)} min${n ? `. Given to ${n} ${n === 1 ? "client" : "clients"}` : ""}</div></a>
-        <div class="wk-actions"><button class="small" data-as="${t.id}">Assign to client</button><button class="small secondary" data-ed="${t.id}">Edit</button>
-          <button class="small secondary" data-dup="${t.id}">Duplicate</button><button class="small ghost" data-dl="${t.id}">Delete</button></div></div>`;
-    }).join("") || `<div class="card empty">${(tpls || []).length ? "No workouts match." : "No saved workouts yet. Tap Create workout to build your first one."}</div>`;
-    startMoves($("#wl"));
+    const q = $("#wq").value.trim().toLowerCase(); const fl = $("#wf2")?.value || ""; const sk = $("#ws").value;
+    const m = (x) => !q || x.name.toLowerCase().includes(q);
+    let html = "";
+    if (view === "home" && !q && !fl) {
+      const count = (fid) => T.filter((t) => (t.folder_id || null) === fid).length;
+      const tile = (href, name, sub, icon = "train") => `<a class="folder" href="${href}">${ICON[icon] || ""}<b>${esc(name)}</b><span class="muted">${sub}</span></a>`;
+      html = `<div class="sec"><h2>Folders</h2><button class="small secondary" id="fNew">${ICON.plus} New folder</button></div>
+        <div class="folders">${tile("#/folder/all", "All workouts", `${T.length + W.length} workouts`)}${tile("#/folder/general", "General library", `${count(null)} master`)}
+        ${F.map((f) => tile(`#/folder/${f.id}`, f.name, `${count(f.id)} master`)).join("")}</div>
+        <div class="sec"><h2>Client folders</h2></div>
+        <div class="folders">${C.map((cl) => { const k = W.filter((w) => w.client_id === cl.id).length; return tile(`#/cfolder/${cl.id}`, cName(cl.id), `${k} ${k === 1 ? "workout" : "workouts"}`, "clients"); }).join("") || `<div class="empty">Clients appear here once they join with your invite link.</div>`}</div>`;
+    } else {
+      // which masters and client workouts are in view
+      let tl = [], wl = [];
+      if (client) wl = W.filter((w) => w.client_id === client.id);
+      else if (folder && folder.id === "general") tl = T.filter((t) => !t.folder_id);
+      else if (folder && folder.id !== "all") tl = T.filter((t) => t.folder_id === folder.id);
+      else { tl = T; wl = W; }
+      if (fl.startsWith("f:")) { const fid = fl.slice(2); tl = T.filter((t) => (fid === "general" ? !t.folder_id : t.folder_id === fid)); wl = []; }
+      if (fl.startsWith("c:")) { tl = []; wl = W.filter((w) => w.client_id === fl.slice(2)); }
+      tl = sortBy(tl.filter(m), sk); wl = sortBy(wl.filter(m), sk);
+      const wide = !folder || folder.id === "all" || fl;
+      html = `${client ? `<div class="row" style="gap:8px;margin-bottom:10px"><button class="small" onclick="location.hash='#/builder/${client.id}'">${ICON.plus} New workout for ${esc(firstName(client))}</button>
+          <button class="small secondary" id="cfAdd">Add from my library</button></div>`
+        : folder && folder.id !== "all" ? `<button class="small" id="fCreate" style="margin-bottom:10px">${ICON.plus} Create workout in this folder</button>` : ""}
+        ${tl.length ? `${wl.length ? `<div class="sec"><h2>Master workouts</h2></div>` : ""}${tl.map((t) => tplCard(t, wide)).join("")}` : ""}
+        ${wl.length ? `${tl.length ? `<div class="sec"><h2>Client workouts</h2></div>` : ""}${wl.map((w) => cwCard(w, !client)).join("")}` : ""}
+        ${!tl.length && !wl.length ? `<div class="card empty">${q ? "No workouts match." : client ? `No workouts for ${esc(firstName(client))} yet.` : "This folder is empty. Create a workout here, or move one in."}</div>` : ""}`;
+    }
+    $("#wl").innerHTML = html; startMoves($("#wl"));
+    bindCards();
+  };
+
+  const reload = () => workoutLibrary(view, arg);
+  const copyTo = (src, title) => sheetPick(title, C.map((cl) => ({ value: cl.id, label: cName(cl.id) })), async (cid) => {
+    const w2 = await saveClientCopy(src, cid); if (w2) { toast(`Copied into ${cName(cid)}'s folder. Adjust it there; the original stays as it is.`); reload(); }
+  }, "Their copy has no date yet. Open it in their folder to set one or make changes.");
+  const loadItems = async (wid) => { const { data } = await sb.from("workout_items").select("*").eq("workout_id", wid).order("position"); return data || []; };
+  function bindCards() {
+    $("#fNew")?.addEventListener("click", async () => {
+      const name = (prompt("Folder name, e.g. Glute programmes, Beginners, Sarah") || "").trim().slice(0, 60); if (!name) return;
+      const { error } = await sb.from("workout_folders").insert({ trainer_id: me.id, name }); if (!fail(error)) { toast(`Folder "${name}" created`); reload(); }
+    });
+    $("#fCreate")?.addEventListener("click", () => { if (folder && folder.id !== "general") sessionStorage.setItem("or-new-folder", folder.id); go("wb/new"); });
+    $("#cfAdd")?.addEventListener("click", () => sheetPick(`Add to ${firstName(client)}'s folder`, sortBy(T, "name").map((t) => ({ value: t.id, label: t.name, sub: fName(t.folder_id) })), async (tid) => {
+      const t = T.find((x) => x.id === tid); const w2 = await saveClientCopy(t, client.id); if (w2) { toast(`Added "${t.name}". It's ${firstName(client)}'s own copy.`); reload(); }
+    }));
     $$("[data-as]").forEach((b) => (b.onclick = () => go("assign/" + b.dataset.as)));
-    $$("[data-ed]").forEach((b) => (b.onclick = () => go("wb/" + b.dataset.ed)));
+    $$("[data-cp]").forEach((b) => (b.onclick = () => { const t = T.find((x) => x.id === b.dataset.cp); copyTo(t, `Copy "${t.name}" to…`); }));
+    $$("[data-mv]").forEach((b) => (b.onclick = () => {
+      const t = T.find((x) => x.id === b.dataset.mv);
+      sheetPick(`Move "${t.name}" to…`, [{ value: "", label: "General library" }, ...F.map((f) => ({ value: f.id, label: f.name }))].filter((o) => o.value !== (t.folder_id || "")), async (fid) => {
+        const { error } = await sb.from("workout_templates").update({ folder_id: fid || null }).eq("id", t.id); if (!fail(error)) { toast(`Moved to ${fName(fid || null)}`); reload(); }
+      });
+    }));
     $$("[data-dup]").forEach((b) => (b.onclick = async () => {
-      const t = tpls.find((x) => x.id === b.dataset.dup);
-      const { error } = await sb.from("workout_templates").insert({ trainer_id: me.id, name: `${t.name} (copy)`.slice(0, 120), notes: t.notes, items: t.items });
-      if (!fail(error)) { toast(`Duplicated "${t.name}"`); workoutLibrary(); }
+      const t = T.find((x) => x.id === b.dataset.dup);
+      const { error } = await sb.from("workout_templates").insert({ trainer_id: me.id, name: `${t.name} (copy)`.slice(0, 120), notes: t.notes, items: t.items, folder_id: t.folder_id || null });
+      if (!fail(error)) { toast(`Duplicated "${t.name}"`); reload(); }
     }));
     $$("[data-dl]").forEach((b) => (b.onclick = async () => {
-      const t = tpls.find((x) => x.id === b.dataset.dl);
-      if (!confirm(`Delete "${t.name}"? Workouts already given to clients stay.`)) return;
-      const { error } = await sb.from("workout_templates").delete().eq("id", t.id); if (!fail(error)) { toast("Deleted"); workoutLibrary(); }
+      const t = T.find((x) => x.id === b.dataset.dl);
+      if (!confirm(`Delete the master workout "${t.name}"? Copies already in clients' folders stay.`)) return;
+      const { error } = await sb.from("workout_templates").delete().eq("id", t.id); if (!fail(error)) { toast("Deleted"); reload(); }
     }));
-  };
-  $("#wq").oninput = draw; draw();
+    $$("[data-cc]").forEach((b) => (b.onclick = async () => {
+      const w = W.find((x) => x.id === b.dataset.cc); const items = await loadItems(w.id);
+      copyTo({ name: w.name, notes: null, items, id: w.template_id }, `Copy "${w.name}" to…`);
+    }));
+    $$("[data-sm]").forEach((b) => (b.onclick = async () => {
+      const w = W.find((x) => x.id === b.dataset.sm); const items = await loadItems(w.id);
+      sheetPick(`Save "${w.name}" as a master in…`, [{ value: "", label: "General library" }, ...F.map((f) => ({ value: f.id, label: f.name }))], async (fid) => {
+        const { error } = await sb.from("workout_templates").insert({ trainer_id: me.id, name: w.name, items: items.map(stripItem), folder_id: fid || null });
+        if (!fail(error)) { toast(`Saved to ${fName(fid || null)}. ${cName(w.client_id)}'s copy is unchanged.`); reload(); }
+      });
+    }));
+    $$("[data-cd]").forEach((b) => (b.onclick = async () => {
+      const w = W.find((x) => x.id === b.dataset.cd);
+      if (!confirm(`Delete "${w.name}" from ${cName(w.client_id)}'s folder, with any sets they logged in it? Your master workouts are not affected.`)) return;
+      const { error } = await sb.from("workouts").delete().eq("id", w.id); if (!fail(error)) { toast("Deleted"); reload(); }
+    }));
+  }
+  $("#wNew")?.addEventListener("click", () => go("wb/new"));
+  $("#fRen")?.addEventListener("click", async () => {
+    const name = (prompt("New folder name", folder.name) || "").trim().slice(0, 60); if (!name || name === folder.name) return;
+    const { error } = await sb.from("workout_folders").update({ name }).eq("id", folder.id); if (!fail(error)) { toast("Folder renamed. Its workouts are unchanged."); reload(); }
+  });
+  $("#fDel")?.addEventListener("click", async () => {
+    const k = T.filter((t) => t.folder_id === folder.id).length;
+    if (!confirm(`Delete the folder "${folder.name}"?${k ? ` Its ${k} ${k === 1 ? "workout moves" : "workouts move"} to the General library. No workouts are deleted.` : ""}`)) return;
+    if (k) { const { error } = await sb.from("workout_templates").update({ folder_id: null }).eq("folder_id", folder.id); if (fail(error)) return; }
+    const { error } = await sb.from("workout_folders").delete().eq("id", folder.id); if (!fail(error)) { toast("Folder deleted. Its workouts are in the General library."); go("workouts"); }
+  });
+  $("#wq").oninput = draw; $("#ws").onchange = () => { localStorage.setItem("or-wsort", $("#ws").value); draw(); }; $("#wf2")?.addEventListener("change", draw);
+  draw();
 }
 
 async function assignView(id, preClient) {
@@ -2625,10 +2872,12 @@ async function assignView(id, preClient) {
     myLibrary(),
   ]);
   if (!t) return render(`<div class="empty">Workout not found.</div>`);
+  if (!preClient && (clients || []).length === 1) preClient = clients[0].id;
   const ex = (eid) => lib.find((x) => x.id === eid) || { name: "Exercise", equipment: [] };
   const needs = (cl) => [...new Set((t.items || []).flatMap((i) => missingEquipment(ex(i.exercise_id), cl.equipment)))];
   const label = (cl) => (cl.id === me.id ? "Me (My training)" : cl.full_name);
   render(`<button class="back" onclick="location.hash='#/workouts'">Back to workouts</button><h1>Assign "${esc(t.name)}"</h1>
+    <div class="card nudge saved-ok">${ICON.check} <span><b>This workout is saved</b> in your library. Assigning gives a client their own copy. <a href="#/workouts">Done for now</a></span></div>
     <div class="card"><div class="row between"><b>${(t.items || []).length} exercises, about ${estMinutes(t.items)} min</b><a href="#/wb/${t.id}">Edit</a></div>
       ${SECTIONS.map((sec) => { const its = (t.items || []).filter((i) => sectionOf(i) === sec.key); return its.length ? `<p class="muted" style="margin:8px 0 2px">${sec.key}</p>
       <ol class="steps" style="margin:0">${its.map((i) => `<li>${esc(ex(i.exercise_id).name)} <span class="muted">${esc(targetText(i))}</span></li>`).join("")}</ol>` : ""; }).join("")}</div>
@@ -2639,10 +2888,10 @@ async function assignView(id, preClient) {
       <div class="grid2"><div><label for="asD">Date</label><input id="asD" type="date" value="${today()}"></div>
         <div><label for="asW">Repeat</label><select id="asW">${[[1, "Just this day"], [2, "Weekly for 2 weeks"], [4, "Weekly for 4 weeks"], [6, "Weekly for 6 weeks"], [8, "Weekly for 8 weeks"], [12, "Weekly for 12 weeks"]].map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></div></div>
       <button class="block" style="margin-top:14px">3. Assign</button></form>`);
-  $$("#asC .chip").forEach((ch) => (ch.onclick = () => { ch.classList.toggle("on"); ch.setAttribute("aria-pressed", ch.classList.contains("on")); }));
+  $$("#asC .chip").forEach((ch) => (ch.onclick = () => { ch.classList.toggle("on"); ch.setAttribute("aria-pressed", ch.classList.contains("on")); $("#asC").classList.remove("bad"); }));
   $("#as").onsubmit = async (e) => {
     e.preventDefault();
-    const ids = $$("#asC .chip.on").map((ch) => ch.dataset.c); if (!ids.length) return toast("Choose at least one client");
+    const ids = $$("#asC .chip.on").map((ch) => ch.dataset.c); if (!ids.length) { $("#asC").classList.add("bad"); $("#asC").scrollIntoView({ block: "center", behavior: "smooth" }); return toast("Tap a client's name under step 1 to choose who gets it. Your workout is already saved."); }
     const weeks = Number($("#asW").value); const start = $("#asD").value || today();
     const names = ids.map((cid) => label(clients.find((x) => x.id === cid))).join(", ");
     if (!confirm(`Assign "${t.name}" to ${names}, ${weeks > 1 ? `weekly for ${weeks} weeks from` : "on"} ${fmtDate(start)}?`)) return;

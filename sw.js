@@ -1,5 +1,5 @@
 // Lets the app install on phones and open fast. Data always comes live from the server.
-const CACHE = "or-app-v20";
+const CACHE = "or-app-v21";
 const SHELL = ["./", "index.html", "css/styles.css", "js/app.js", "js/config.js", "js/nutrition.js", "js/engage.js", "js/moves.js", "js/muscles.js", "js/fig3d.js", "js/starter.js", "manifest.json"];
 
 self.addEventListener("install", (e) => {

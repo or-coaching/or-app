@@ -448,11 +448,14 @@ export const ZONES = {
   lats: [["torso", "b", 0.5, 0.86]], traps: [["torso", "b", 0.84, 1]], lowerback: [["torso", "b", 0.26, 0.5]],
 };
 const BACK_ONLY = new Set(["hamstrings", "glutes", "triceps", "reardelts", "lats", "traps", "lowerback", "adductors"]);
-function workOf(move) {
-  if (move._w) return move._w;
-  const [p, s] = MUSCLES[move.key] || [[], []]; const front = move.view === "front";
+function workOf(move, fig) {
+  if (fig?.dataset.mp != null) { if (fig._w) return fig._w; }
+  else if (move._w) return move._w;
+  const own = fig?.dataset.mp != null;
+  const [p, s] = own ? [fig.dataset.mp.split(" ").filter(Boolean), (fig.dataset.ms || "").split(" ").filter(Boolean)] : MUSCLES[move.key] || [[], []]; const front = move.view === "front";
   const z = (list) => { const o = {}; list.forEach((m) => { if (front && BACK_ONLY.has(m)) return; (ZONES[m] || []).forEach(([seg, side, a, b]) => (o[seg] ||= []).push([front && side !== "x" ? "x" : side, a, b])); }); return o; };
-  return (move._w = { p: z(p), s: z(s.filter((m) => !p.includes(m))) });
+  const w = { p: z(p), s: z(s.filter((m) => !p.includes(m))) };
+  return own ? (fig._w = w) : (move._w = w);
 }
 const wAt = (prof, t, i) => { for (let k = 1; k < prof.length; k++) if (t <= prof[k][0]) { const [t0] = prof[k - 1], [t1] = prof[k]; const u = (t - t0) / (t1 - t0 || 1); return prof[k - 1][i] + (prof[k][i] - prof[k - 1][i]) * u; } return prof[prof.length - 1][i]; };
 const smooth = (pts, S) => { const P2 = pts.map(S).map(([x, y]) => [+x, +y]); const n = P2.length; const mid = (a, b) => [((a[0] + b[0]) / 2).toFixed(1), ((a[1] + b[1]) / 2).toFixed(1)];
@@ -483,7 +486,7 @@ function drawPose(svg, move, pose) {
   const S = (p) => [(p[0] + off.dx).toFixed(1), (GROUND - (p[1] + off.dy)).toFixed(1)];
   const seg = (a, b) => { const [x1, y1] = S(a), [x2, y2] = S(b); return `M${x1} ${y1}L${x2} ${y2}`; };
   const set = (cls, d) => { const el = svg.querySelector("." + cls); if (el) el.setAttribute("d", d); };
-  const work = workOf(move);
+  const work = workOf(move, svg.closest(".move"));
   // one limb part: its shape plus primary/secondary muscle overlays
   const part = (name, segName, sp, prof) => {
     set(`m-${name}`, smooth(outline(sp, prof), S));
@@ -559,9 +562,9 @@ function drawPose(svg, move, pose) {
 }
 
 // Public: markup for a demo. Animated ones are picked up by startMoves().
-export function moveSvg(key, { animate = true, label = true, props = true, big = false } = {}) {
+export function moveSvg(key, { animate = true, label = true, props = true, big = false, muscles = null, model = "female" } = {}) {
   const m = MOVES[key]; if (!m) return "";
-  return `<figure class="move ${animate ? "anim" : ""} ${m.view === "front" ? "front" : ""} ${big ? "big" : ""}" data-move="${key}" data-props="${props ? 1 : 0}" style="--top:${TOP_COLOURS[m.top].top}">
+  return `<figure class="move ${animate ? "anim" : ""} ${m.view === "front" ? "front" : ""} ${big ? "big" : ""} ${model === "male" ? "male" : ""}" data-move="${key}" data-props="${props ? 1 : 0}" data-model="${model === "male" ? "male" : "female"}"${muscles ? ` data-mp="${muscles[0].join(" ")}" data-ms="${(muscles[1] || []).join(" ")}"` : ""} style="--top:${TOP_COLOURS[m.top].top}">
     <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${m.label} demonstration">
       <circle class="m-ring" cx="${W - 34}" cy="40" r="46"/>
       <line class="m-ground" x1="14" y1="${GROUND + 1.5}" x2="${W - 14}" y2="${GROUND + 1.5}"/>
@@ -571,7 +574,7 @@ export function moveSvg(key, { animate = true, label = true, props = true, big =
       <path class="m-thigh-f m-legs-f"/><path class="m-thigh-f-s m-mus s"/><path class="m-thigh-f-p m-mus p"/><path class="m-shin-f m-legs-f"/><path class="m-shin-f-s m-mus s"/><path class="m-shin-f-p m-mus p"/><path class="m-shoe-f"/>
       <g class="m-lines"></g><g class="m-props"></g>
       <path class="m-torso m-skin"/><path class="m-waist"/><path class="m-top"/><path class="m-torso-s m-mus s"/><path class="m-torso-p m-mus p"/><path class="m-neck m-skin"/>
-      <circle class="m-bun" r="${(HEAD_R * 0.62).toFixed(1)}"/><circle class="m-hair" r="${(HEAD_R + 1).toFixed(1)}"/><circle class="m-head" r="${HEAD_R}"/>
+      <circle class="m-bun" r="${(HEAD_R * 0.62).toFixed(1)}"/><circle class="m-hair" r="${(HEAD_R + (model === "male" ? 0.5 : 1)).toFixed(1)}"/><circle class="m-head" r="${HEAD_R}"/>
       <path class="m-thigh-n m-legs"/><path class="m-thigh-n-s m-mus s"/><path class="m-thigh-n-p m-mus p"/><path class="m-shin-n m-legs"/><path class="m-shin-n-s m-mus s"/><path class="m-shin-n-p m-mus p"/><path class="m-shoe-n"/>
       <path class="m-uarm-n m-skin"/><path class="m-uarm-n-s m-mus s"/><path class="m-uarm-n-p m-mus p"/><path class="m-farm-n m-skin"/><path class="m-farm-n-s m-mus s"/><path class="m-farm-n-p m-mus p"/>
     </svg>${label ? `<figcaption>${esc(m.label)}: animated demo. Your coach's video replaces it.</figcaption>` : ""}</figure>`;
@@ -603,13 +606,15 @@ export function startMoves(root = document) {
     drawPose(f.querySelector("svg"), m, poseAt(m, anim ? 0 : m.still ?? 0.5));
     if (anim) live.add(f);
   });
+  root.querySelectorAll(".move.big:not(.has-ctl)").forEach(addControls);
   upgrade3d(root);
   if (running || !live.size) return;
-  running = true; t0 = performance.now();
+  running = true; t0 = performance.now(); let last = t0;
   const tick = (now) => {
+    const dt = Math.min(0.1, (now - last) / 1000); last = now;
     for (const f of live) if (!f.isConnected) live.delete(f);
     if (!live.size) { running = false; return; }
-    live.forEach((f) => { const m = MOVES[f.dataset.move]; drawPose(f.querySelector("svg"), m, poseAt(m, (now - t0) / 1000 / m.secs)); });
+    live.forEach((f) => { const m = MOVES[f.dataset.move]; if (!f._paused) f._t = (f._t || 0) + dt; drawPose(f.querySelector("svg"), m, poseAt(m, (f._t || 0) / m.secs)); });
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
@@ -630,9 +635,26 @@ function upgrade3d(root) {
       if (!f.isConnected || f.classList.contains("has3d")) return;
       f._stop3d?.(); f.classList.add("has3d");
       const host = document.createElement("div"); host.className = "m3d-host"; f.insertBefore(host, f.firstChild);
-      try { f._stop3d = m.mount(host, f.dataset.move, { props: f.dataset.props !== "0" }); live.delete(f); }
+      try { f._stop3d = m.mount(host, f.dataset.move, { props: f.dataset.props !== "0", model: f.dataset.model,
+          muscles: f.dataset.mp != null ? [f.dataset.mp.split(" ").filter(Boolean), (f.dataset.ms || "").split(" ").filter(Boolean)] : null });
+        live.delete(f); if (f._paused) f._stop3d.pause?.(true); f.querySelector(".m-views")?.removeAttribute("hidden"); }
       catch (e) { f.classList.remove("has3d"); host.remove(); }
-      const cap = f.querySelector("figcaption"); if (cap) cap.textContent = "Drag sideways to turn her round. Your coach's video replaces this demo.";
+      const cap = f.querySelector("figcaption"); if (cap) cap.textContent = "Drag sideways to turn the model round. Your coach's video replaces this demo.";
     });
+  });
+}
+
+// Play / pause, replay, and (in 3D) front, side and back views for large demos.
+function addControls(f) {
+  f.classList.add("has-ctl");
+  const bar = document.createElement("div"); bar.className = "m-ctl";
+  bar.innerHTML = `<button type="button" data-c="pause" aria-label="Pause demo">Pause</button><button type="button" data-c="replay" aria-label="Replay demo from the start">Replay</button>
+    <span class="m-views" hidden><button type="button" data-c="front">Front</button><button type="button" data-c="side">Side</button><button type="button" data-c="back">Back</button></span>`;
+  f.insertBefore(bar, f.querySelector("figcaption"));
+  bar.addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return; const c = b.dataset.c;
+    if (c === "pause") { f._paused = !f._paused; b.textContent = f._paused ? "Play" : "Pause"; b.setAttribute("aria-label", f._paused ? "Play demo" : "Pause demo"); f._stop3d?.pause?.(f._paused); }
+    if (c === "replay") { f._t = 0; f._stop3d?.replay?.(); if (f._paused) bar.querySelector('[data-c="pause"]').click(); }
+    if (["front", "side", "back"].includes(c)) { f._stop3d?.view?.(c); bar.querySelectorAll(".m-views button").forEach((x) => x.classList.toggle("on", x === b)); }
   });
 }

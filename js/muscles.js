@@ -59,7 +59,7 @@ const WORDS = [
 ];
 
 export function musclesFor(ex, moveKey) {
-  if (Array.isArray(ex?.muscles) && ex.muscles.length) return [ex.muscles, []];
+  if (Array.isArray(ex?.muscles) && ex.muscles.length) return [ex.muscles, Array.isArray(ex.muscles2) ? ex.muscles2.filter((m) => !ex.muscles.includes(m)) : []];
   if (moveKey && MUSCLES[moveKey]) return MUSCLES[moveKey];
   const txt = `${ex?.muscle_group || ""}`.toLowerCase(); const found = [];
   for (const [re, m] of WORDS) if (re.test(txt) && !found.includes(m)) found.push(m);
@@ -111,6 +111,6 @@ export function muscleMapSvg([primary, secondary], { compact = false } = {}) {
   const names = muscleNames(primary), sec = muscleNames([...sel.s]);
   return `<div class="mmap ${compact ? "compact" : ""}">
     <svg viewBox="0 0 210 212" role="img" aria-label="Muscles worked: ${names.join(", ") || "not set"}">${view(FRONT, sel, "Front", 0)}${view(BACK, sel, "Back", 110)}</svg>
-    ${compact ? "" : `<div class="mm-key">${names.length ? `<p><span class="mm-dot p"></span><b>Main:</b> ${names.join(", ")}</p>` : `<p class="muted">Muscles not set for this exercise.</p>`}${sec.length ? `<p><span class="mm-dot s"></span><b>Also:</b> ${sec.join(", ")}</p>` : ""}</div>`}
+    ${compact ? "" : `<div class="mm-key">${names.length ? `<p><span class="mm-dot p"></span><b>Main:</b> ${names.join(", ")}</p>` : `<p class="muted">Muscles not set for this exercise.</p>`}${sec.length ? `<p><span class="mm-dot s"></span><b>Supporting:</b> ${sec.join(", ")}</p>` : ""}</div>`}
   </div>`;
 }

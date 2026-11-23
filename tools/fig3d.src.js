@@ -45,10 +45,14 @@ export function supported() {
 }
 
 // Mount a 3D figure for `key` into `host` (an element sized by CSS). Returns a stop() function.
-export function mount(host, key, { props = true } = {}) {
+export function mount(host, key, { props = true, model = "female", muscles = null } = {}) {
   const move = MOVES[key]; if (!move) return () => {};
-  const front = move.view === "front";
-  const [prim, sec] = MUSCLES[key] || [[], []];
+  const front = move.view === "front"; const male = model === "male";
+  const [prim, sec] = muscles || MUSCLES[key] || [[], []];
+  const P_T = male ? [[0, 7, 8.2], [0.15, 6.8, 7.8], [0.42, 6.4, 6.4], [0.68, 8.8, 7.4], [0.88, 7.6, 7.8], [1, 5, 5.4]] : PROF.torso;
+  const T_W = male ? [[0, 9.6], [0.35, 9.4], [0.72, 12], [0.9, 14], [1, 7]] : TW;
+  const P_U = male ? PROF.uarm.map(([t, f, b]) => [t, f * 1.12, b * 1.12]) : PROF.uarm;
+  const P_F = male ? PROF.farm.map(([t, f, b]) => [t, f * 1.1, b * 1.1]) : PROF.farm;
   const col = TOP_COLOURS[move.top || "sage"];
   const canvas = document.createElement("canvas"); canvas.className = "m3d"; host.appendChild(canvas);
   const r = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: "low-power" });
@@ -66,6 +70,7 @@ export function mount(host, key, { props = true } = {}) {
     SHOE = MAT(0xefe8dc), HAIR = MAT(0x2a1f1a, { roughness: 0.9 }), IRON = MAT(0x3a3f44, { metalness: 0.6, roughness: 0.35 }),
     KIT = MAT(0x4a554c, { roughness: 0.8 }), CABLE = MAT(0x9aa39c, { metalness: 0.4, roughness: 0.4 }), BAND = MAT(0xe0a95a, { roughness: 0.7 }), SAGE = MAT(0x9cb59a);
   const GLOW = () => MAT(0xff5a36, { emissive: 0xff3a10, emissiveIntensity: 0.4, roughness: 0.45, transparent: true, opacity: 0.92 });
+  const GLOW2 = () => MAT(0xf2b23a, { emissive: 0xd08a10, emissiveIntensity: 0.2, roughness: 0.5, transparent: true, opacity: 0.85 });
 
   // V: figure point -> world. Side view: x along world x, depth z. Front view: x becomes world z (viewer on +x).
   const V = (p, off, z = 0) => front ? new THREE.Vector3(0, (p[1] + off.dy) * U, -(p[0] + off.dx - 100) * U) : new THREE.Vector3((p[0] + off.dx - 100) * U, (p[1] + off.dy) * U, z);
@@ -89,7 +94,7 @@ export function mount(host, key, { props = true } = {}) {
   const part = (prof, mat, opts = {}) => { const g = new THREE.Group(); const m = new THREE.Mesh(shell(prof, opts), mat); m.castShadow = true; g.add(m); g.matrixAutoUpdate = false; fig.add(g); return g; };
   const addZones = (g, segName, prof, lateral) => {
     for (const [list, strong] of [[prim, true], [sec.filter((m) => !prim.includes(m)), false]]) for (const mu of list) for (const [s, side, a, b] of ZONES[mu] || []) {
-      if (s !== segName) continue; const mat = GLOW(); if (!strong) { mat.opacity = 0.55; mat.emissiveIntensity = 0.1; }
+      if (s !== segName) continue; const mat = strong ? GLOW() : GLOW2();
       const grow = segName === "uarm" ? 1.15 : segName === "torso" ? 1.075 : 1.035;
       g.add(new THREE.Mesh(shell(prof, { t0: a, t1: b, side: side === "x" ? "all" : side, lateral, grow }), mat)); glows.push({ mat, strong });
     }
@@ -97,25 +102,26 @@ export function mount(host, key, { props = true } = {}) {
   const Lg = [0, 1].map(() => { const th = part(PROF.thigh, LEGS); addZones(th, "thigh", PROF.thigh); const sh = part(PROF.shin, LEGS); addZones(sh, "shin", PROF.shin);
     const shoe = new THREE.Mesh(new THREE.CapsuleGeometry(0.06, 0.13, 6, 14), SHOE); shoe.castShadow = true; const sg = new THREE.Group(); sg.add(shoe); shoe.rotation.z = Math.PI / 2; shoe.position.x = 0.07; sg.matrixAutoUpdate = false; fig.add(sg);
     return { th, sh, sg }; });
-  const Ar = [0, 1].map(() => { const ua = part(PROF.uarm, SKIN); const sl = new THREE.Mesh(shell(PROF.uarm, { t0: 0, t1: 0.4, grow: 1.12 }), TOP); sl.castShadow = true; ua.add(sl); addZones(ua, "uarm", PROF.uarm);
-    const fa = part(PROF.farm, SKIN); addZones(fa, "farm", PROF.farm);
+  const Ar = [0, 1].map(() => { const ua = part(P_U, SKIN); const sl = new THREE.Mesh(shell(P_U, { t0: 0, t1: 0.4, grow: 1.12 }), TOP); sl.castShadow = true; ua.add(sl); addZones(ua, "uarm", P_U);
+    const fa = part(P_F, SKIN); addZones(fa, "farm", P_F);
     const hand = new THREE.Group(); hand.matrixAutoUpdate = false; fig.add(hand);
     const palm = new THREE.Mesh(new THREE.CapsuleGeometry(0.03, 0.04, 6, 14), SKIN); palm.scale.set(0.62, 1, 1.15); palm.position.y = 0.038; palm.castShadow = true; hand.add(palm);
     const fing = new THREE.Mesh(new THREE.CapsuleGeometry(0.026, 0.03, 6, 14), SKIN); fing.scale.set(0.55, 1, 1.1); fing.position.set(-0.006, 0.09, 0); fing.rotation.z = 0.25; hand.add(fing);
     const thumb = new THREE.Mesh(new THREE.CapsuleGeometry(0.012, 0.03, 5, 10), SKIN); thumb.position.set(0, 0.045, 0.036); thumb.rotation.x = -0.55; hand.add(thumb);
     return { ua, fa, hand, pos: new THREE.Vector3(), dir: new THREE.Vector3(0, -1, 0) }; });
   const torso = new THREE.Group(); torso.matrixAutoUpdate = false; fig.add(torso);
-  for (const [t0, t1, mat, grow] of [[0, 0.3, LEGS, 1], [0.27, 1, TOP, 1.045]]) { const m = new THREE.Mesh(shell(PROF.torso, { t0, t1, lateral: TW, grow }), mat); m.castShadow = true; torso.add(m); }
+  for (const [t0, t1, mat, grow] of [[0, 0.3, LEGS, 1], [0.27, 1, TOP, 1.045]]) { const m = new THREE.Mesh(shell(P_T, { t0, t1, lateral: T_W, grow }), mat); m.castShadow = true; torso.add(m); }
   const LOGO = new THREE.MeshStandardMaterial({ map: logoTex(col.ink), transparent: true, roughness: 0.85, polygonOffset: true, polygonOffsetFactor: -2 });
-  torso.add(new THREE.Mesh(shell(PROF.torso, { t0: 0.56, t1: 0.88, side: "f", lateral: TW, grow: 1.05 }), LOGO));
-  addZones(torso, "torso", PROF.torso, TW);
+  torso.add(new THREE.Mesh(shell(P_T, { t0: 0.56, t1: 0.88, side: "f", lateral: T_W, grow: 1.05 }), LOGO));
+  addZones(torso, "torso", P_T, T_W);
   const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 1, 16), SKIN); neck.matrixAutoUpdate = false; fig.add(neck);
   const head = new THREE.Group(); fig.add(head);
   const hm = new THREE.Mesh(new THREE.SphereGeometry(0.17, 32, 24), SKIN); hm.scale.set(0.92, 1.08, 0.9); hm.castShadow = true; head.add(hm);
-  const hair = new THREE.Mesh(new THREE.SphereGeometry(0.185, 32, 24, 0, Math.PI * 2, 0, Math.PI * 0.5), HAIR); hair.scale.set(0.97, 1.12, 0.96); hair.rotation.z = 0.75; head.add(hair);
+  const hair = new THREE.Mesh(new THREE.SphereGeometry(male ? 0.178 : 0.185, 32, 24, 0, Math.PI * 2, 0, Math.PI * (male ? 0.42 : 0.5)), HAIR); hair.scale.set(0.97, 1.12, 0.96); hair.rotation.z = male ? 0.45 : 0.75; head.add(hair);
   const knot = new THREE.Mesh(new THREE.SphereGeometry(0.045, 16, 12), HAIR); knot.position.set(-0.17, 0.1, 0); head.add(knot);
   const tie = new THREE.Mesh(new THREE.TorusGeometry(0.03, 0.011, 8, 18), SAGE); tie.position.set(-0.165, 0.1, 0); tie.rotation.set(0, Math.PI / 2, 0.9); head.add(tie);
   const tail = new THREE.Group(); tail.position.set(-0.19, 0.09, 0); head.add(tail);
+  if (male) { knot.visible = false; tie.visible = false; tail.visible = false; }
   let seg = tail; const tailSegs = [];
   for (let k = 0; k < 9; k++) {
     const len = 0.06, rr = 0.046 - k * 0.0026; const g = new THREE.Group(); if (k) g.position.y = -tailSegs[k - 1].len; seg.add(g);
@@ -167,7 +173,7 @@ export function mount(host, key, { props = true } = {}) {
   let cur = { pts: {} };
   function pose(t) {
     const p = poseAt(move, t); const j = joints(p, front); const off = place(move, j, p);
-    const hipZ = front ? 0 : 0.13, shZ = front ? 0 : 0.21;
+    const hipZ = front ? 0 : male ? 0.12 : 0.13, shZ = front ? 0 : male ? 0.24 : 0.21;
     const pts = {};
     [0, 1].forEach((i) => {
       const z = i ? -hipZ : hipZ, lg = j.legs[i];
@@ -229,15 +235,15 @@ export function mount(host, key, { props = true } = {}) {
   canvas.style.touchAction = "pan-y"; // vertical swipes still scroll the page; sideways drags turn her round
 
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  let visible = true, stopped = false, raf = 0; const t0 = performance.now();
+  let visible = true, stopped = false, raf = 0, paused = false, clock = 0, last = performance.now();
   const io = "IntersectionObserver" in window ? new IntersectionObserver(([e]) => { visible = e.isIntersecting; if (visible && !raf && !stopped) raf = requestAnimationFrame(tick); }) : null; io?.observe(canvas);
   const fit = () => { const w = canvas.clientWidth, h = canvas.clientHeight; if (!w || !h) return; if (canvas.width !== Math.round(w * r.getPixelRatio()) || canvas.height !== Math.round(h * r.getPixelRatio())) { r.setSize(w, h, false); cam.aspect = w / h; cam.updateProjectionMatrix(); } };
-  let restart = 0;
   function tick(now) {
     raf = 0; if (stopped) return; if (!canvas.isConnected) return stop();
-    fit(); const t = window.__or3dT != null ? window.__or3dT : reduce ? move.still ?? 0.5 : (now - t0 - restart) / 1000 / move.secs; pose(t);
+    const dt = Math.min(0.1, (now - last) / 1000); last = now; if (!paused) clock += dt;
+    fit(); const t = window.__or3dT != null ? window.__or3dT : reduce ? move.still ?? 0.5 : clock / move.secs; pose(t);
     const x = ((t % 1) + 1) % 1; const work = 0.5 - 0.5 * Math.cos(x * Math.PI * 2);
-    glows.forEach((g) => (g.mat.emissiveIntensity = g.strong ? 0.25 + 0.75 * work : 0.08 + 0.2 * work));
+    glows.forEach((g) => (g.mat.emissiveIntensity = g.strong ? 0.25 + 0.75 * work : 0.1 + 0.3 * work));
     ctl.update(); r.render(scene, cam);
     if (visible && (!reduce || ctl.enableDamping)) raf = requestAnimationFrame(tick);
   }
@@ -247,6 +253,11 @@ export function mount(host, key, { props = true } = {}) {
     r.dispose(); r.forceContextLoss?.(); canvas.remove();
   }
   raf = requestAnimationFrame(tick);
-  stop.replay = () => { restart = performance.now() - t0; };
+  stop.replay = () => { clock = 0; };
+  stop.pause = (on) => { paused = !!on; };
+  stop.view = (name) => {
+    const d = { front: [1, 0.18, 0.03], side: [0.03, 0.18, 1], back: [-1, 0.18, 0.03] }[name]; if (!d) return;
+    ctl.minPolarAngle = 0.3; ctl.maxPolarAngle = 1.62; cam.position.copy(ctl.target).addScaledVector(new THREE.Vector3(...d).normalize(), dist); ctl.update();
+  };
   return stop;
 }

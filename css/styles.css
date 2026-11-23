@@ -682,3 +682,29 @@ details.qa form { margin-top: 6px; }
 .move.big .m3d-host canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; }
 .move.big.has3d > svg { display: none; }
 .move.big { background: radial-gradient(120% 90% at 50% 28%, #2A322C, #161A17); }
+
+/* folders, drafts, validation (v21) */
+.folders { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.folder { display: flex; flex-direction: column; gap: 4px; padding: 14px; border-radius: 14px; background: var(--card, #1B1F1C); border: 1px solid var(--line, #2c342e); color: inherit; text-decoration: none; }
+.folder svg { width: 22px; height: 22px; color: var(--sage, #9CB59A); }
+.folder b { font-size: .98rem; line-height: 1.25; } .folder:active { transform: scale(.98); }
+.wtools { display: grid; gap: 8px; margin-bottom: 12px; }
+.wk-actions { flex-wrap: wrap; }
+.bad { outline: 2px solid #F07A55 !important; outline-offset: 2px; border-radius: 8px; }
+.draft { border-left: 3px solid #E8B04B; }
+.saved-ok { display: flex; gap: 8px; align-items: flex-start; } .saved-ok svg { width: 18px; height: 18px; flex: none; margin-top: 2px; color: var(--sage, #9CB59A); }
+#asC .chip.on::before { content: "✓ "; }
+
+/* main vs supporting muscles, demo controls, variations (v21) */
+.mm-r.s > * { fill: #F2B23A; fill-opacity: .85; }
+.mm-dot.s { background: #F2B23A; opacity: 1; }
+.move path.m-mus.s { fill: #F2B23A; opacity: .55; }
+.mchip.p { background: #F07A55; color: #141815; border-color: #F07A55; }
+.mchip.p::after { content: " · main"; font-size: .72em; }
+.mchip.s { background: #F2B23A; color: #141815; border-color: #F2B23A; }
+.mchip.s::after { content: " · supporting"; font-size: .72em; }
+.m-ctl { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 10px 8px; }
+.m-ctl button, .m-views button { background: rgba(20,24,21,.75); color: var(--text, #ECE7DD); border: 1px solid #3a443d; border-radius: 999px; padding: 5px 11px; font: inherit; font-size: .78rem; min-height: 32px; cursor: pointer; }
+.m-views { display: inline-flex; gap: 6px; margin-left: auto; } .m-views[hidden] { display: none; }
+.m-views button.on { background: #9CB59A; color: #141815; border-color: #9CB59A; }
+.vars { margin-top: 10px; } .vars .tips { margin-top: 4px; }
