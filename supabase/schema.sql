@@ -776,3 +776,28 @@ alter table public.exercises add column if not exists harder text check (length(
 alter table public.exercises add column if not exists modifications text check (length(modifications) <= 1000);
 alter table public.exercises add column if not exists easier_id uuid references public.exercises(id) on delete set null;
 alter table public.exercises add column if not exists harder_id uuid references public.exercises(id) on delete set null;
+
+-- =====================================================================
+-- CHAT REACTIONS
+-- =====================================================================
+-- One reaction per person per message, from a small fixed set.
+create table if not exists public.message_reactions (
+  message_id  uuid not null references public.messages(id) on delete cascade,
+  user_id     uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  emoji       text not null check (emoji in ('😊', '😠', '😢', '👍', '👎', '❤️')),
+  created_at  timestamptz not null default now(),
+  primary key (message_id, user_id)
+);
+alter table public.message_reactions enable row level security;
+drop policy if exists "chat members read reactions" on public.message_reactions;
+create policy "chat members read reactions" on public.message_reactions for select
+  using (exists (select 1 from public.messages m where m.id = message_id and (m.client_id = auth.uid() or public.coaches(m.client_id))));
+drop policy if exists "chat members react" on public.message_reactions;
+create policy "chat members react" on public.message_reactions for all
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid() and exists (select 1 from public.messages m where m.id = message_id and (m.client_id = auth.uid() or public.coaches(m.client_id))));
+do $$ begin
+  if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'message_reactions') then
+    alter publication supabase_realtime add table public.message_reactions;
+  end if;
+end $$;

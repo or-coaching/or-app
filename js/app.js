@@ -373,7 +373,7 @@ function tabs(items, fab = false) {
     e.currentTarget.setAttribute("aria-expanded", "true");
     document.body.insertAdjacentHTML("beforeend", `<div class="sheet" id="sheet">
       <a href="#/log/weigh">${ICON.scale} Weigh-in</a><a href="#/log/activity">${ICON.walk} Activity</a>
-      ${tracksNut() ? `<a href="#/food">${ICON.food} Food</a>` : ""}<a href="#/roulette">${ICON.dice} Exercise roulette</a><a href="#/passes">${ICON.ticket} Passes</a></div>`);
+<a href="#/roulette">${ICON.dice} Exercise roulette</a><a href="#/passes">${ICON.ticket} Passes</a></div>`);
   });
   $("#meBtn").hidden = !((me?.role === "client" && me.trainer_id) || me?.role === "trainer");
   const mb = $("#modeBtn");
@@ -1399,7 +1399,10 @@ function bindWater(x, after) {
     const { error } = await sb.from("water_logs").upsert({ client_id: me.id, log_date: today(), ml, updated_at: new Date().toISOString() }, { onConflict: "client_id,log_date" });
     if (fail(error)) { b.disabled = false; return; }
     if (x.ml < x.goal && ml >= x.goal) toast("Water goal reached. Well done.");
-    after();
+    // update just the water card where it is, so the page doesn't jump back to the top
+    const card = b.closest("#water");
+    if (card && after !== waterView) { x.ml = ml; card.outerHTML = waterCard(x); bindWater(x, after); return; }
+    const y = window.scrollY; await after(); window.scrollTo(0, y);
   }));
 }
 function waterWeekHtml(rows, goal) {
@@ -1640,16 +1643,44 @@ async function chatView(clientId) {
       : `<div class="card chat-lock"><h3>Chat with your coach</h3><p class="muted" style="margin:0 0 10px">Messaging your coach for advice is included with a pass or a PT plan. You'll still see anything your coach sends you here.</p>
         <button class="block" onclick="location.hash='#/passes'">See passes</button></div>`}</div>`);
   const log = $("#log");
+  // reactions: one per person per message, like Instagram
+  const RX = ["😊", "😠", "😢", "👍", "👎", "❤️"];
+  const rx = new Map(); // message id -> [{user_id, emoji}]
+  // reactions switch on once the database has them (until then the chat works as before)
+  const { data: rr, error: rxErr } = await sb.from("message_reactions").select("message_id, user_id, emoji").in("message_id", (msgs || []).map((m) => m.id).concat("00000000-0000-0000-0000-000000000000"));
+  (rr || []).forEach((r) => { if (!rx.has(r.message_id)) rx.set(r.message_id, []); rx.get(r.message_id).push(r); });
+  const canReact = !rxErr && (me.role === "trainer" || canChat());
+  const rxHtml = (id) => { const list = rx.get(id) || []; return list.length ? `<div class="rx">${list.map((r) => `<span class="${r.user_id === me.id ? "mine" : ""}" title="${r.user_id === me.id ? "You" : esc(other?.full_name || "")}">${r.emoji}</span>`).join("")}</div>` : ""; };
+  const paintRx = (id) => { const b = log.querySelector(`.bubble[data-id="${id}"]`); if (!b) return; b.querySelector(".rx")?.remove(); b.insertAdjacentHTML("beforeend", rxHtml(id)); };
   const add = (m) => {
-    log.insertAdjacentHTML("beforeend", `<div class="bubble ${m.sender_id === me.id ? "me" : "them"}">${esc(m.body)}<time>${fmtTime(m.created_at)}</time></div>`);
+    log.insertAdjacentHTML("beforeend", `<div class="bubble ${m.sender_id === me.id ? "me" : "them"}" data-id="${m.id}" ${canReact ? 'tabindex="0" role="button" aria-label="Message. Tap to react"' : ""}>${esc(m.body)}<time>${fmtTime(m.created_at)}</time>${rxHtml(m.id)}</div>`);
     log.scrollTop = log.scrollHeight;
   };
   (msgs || []).forEach(add);
+  const react = async (id, emoji) => {
+    const list = rx.get(id) || []; const mine = list.find((r) => r.user_id === me.id);
+    const next = list.filter((r) => r.user_id !== me.id); if (!mine || mine.emoji !== emoji) next.push({ message_id: id, user_id: me.id, emoji });
+    rx.set(id, next); paintRx(id);
+    const { error } = mine && mine.emoji === emoji ? await sb.from("message_reactions").delete().eq("message_id", id).eq("user_id", me.id)
+      : await sb.from("message_reactions").upsert({ message_id: id, user_id: me.id, emoji }, { onConflict: "message_id,user_id" });
+    if (error) { rx.set(id, list); paintRx(id); fail(error); }
+  };
+  if (canReact) log.addEventListener("click", (e) => {
+    const pick = e.target.closest("[data-rx]"); if (pick) { e.stopPropagation(); react(pick.closest(".rx-bar").dataset.for, pick.dataset.rx); $(".rx-bar")?.remove(); return; }
+    const b = e.target.closest(".bubble[data-id]"); $(".rx-bar")?.remove(); if (!b || b.dataset.id === "undefined") return;
+    const mine = (rx.get(b.dataset.id) || []).find((r) => r.user_id === me.id)?.emoji;
+    b.insertAdjacentHTML("afterbegin", `<div class="rx-bar" data-for="${b.dataset.id}" role="toolbar" aria-label="React">${RX.map((x) => `<button type="button" data-rx="${x}" class="${x === mine ? "on" : ""}" aria-label="React ${x}">${x}</button>`).join("")}</div>`);
+  });
+  if (!window._rxClose) { window._rxClose = true; document.addEventListener("click", (e) => { if (!e.target.closest(".bubble")) $(".rx-bar")?.remove(); }); }
   await sb.from("messages").update({ read_at: new Date().toISOString() }).eq("client_id", clientId).neq("sender_id", me.id).is("read_at", null);
 
   chatChannel = sb.channel("chat-" + clientId)
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `client_id=eq.${clientId}` }, (p) => {
       if (p.new.sender_id !== me.id) { add(p.new); sb.from("messages").update({ read_at: new Date().toISOString() }).eq("id", p.new.id); }
+    })
+    .on("postgres_changes", { event: "*", schema: "public", table: "message_reactions" }, (p) => {
+      const r = p.new?.message_id ? p.new : p.old; if (!r?.message_id || !log.querySelector(`.bubble[data-id="${r.message_id}"]`) || r.user_id === me.id) return;
+      const list = (rx.get(r.message_id) || []).filter((x) => x.user_id !== r.user_id); if (p.eventType !== "DELETE") list.push(p.new); rx.set(r.message_id, list); paintRx(r.message_id);
     }).subscribe();
 
   const form = $("#send"); if (!form) return;
@@ -2148,15 +2179,7 @@ const estMinutes = (its) => Math.max(5, Math.round((its || []).reduce((t, i) => 
 // Her library; the first time it's empty, it starts with the animated starter pack.
 async function myLibrary() {
   let { data } = await sb.from("exercises").select("*").eq("trainer_id", me.id).order("name");
-  data = data || [];
-  if (!data.length) {
-    const { error } = await sb.from("exercises").insert(STARTER.map(starterRow));
-    if (!error) {
-      toast(`Your library is ready: ${STARTER.length} exercises with animated demos`);
-      ({ data } = await sb.from("exercises").select("*").eq("trainer_id", me.id).order("name")); data = data || [];
-    }
-  }
-  return data;
+  return data || [];
 }
 
 function filterBar(id, lib) {
@@ -2186,37 +2209,30 @@ function exCard(x, { urls = {}, attrs = "", tag = "a", href = "", extra = "" } =
   const media = u ? `<video src="${esc(u)}#t=0.8" muted playsinline loop autoplay preload="metadata"></video>`
     : ytThumb(x) && !mv ? `<span class="ph yt"><img src="${esc(ytThumb(x))}" alt="" loading="lazy"><i aria-hidden="true"></i></span>`
     : mv ? moveSvg(mv, { label: false, props: (x.equipment || []).length > 0 }) : `<span class="ph">${forms(seedOf(x.name), { w: 200, h: 162, scale: 0.5 })}</span>`;
-  const badges = `${x.video_url ? `<span class="chip good">Video</span>` : ""}<span class="chip">${levelOf(x)}</span>${tagsOf(x).slice(0, 2).map((t) => `<span class="chip">${esc(t)}</span>`).join("")}`;
-  return `<${tag} class="ex-tile" ${href ? `href="${href}"` : ""} ${attrs}>${media}<b>${esc(x.name)}</b>
-    <span>${esc([...new Set([catOf(x), x.muscle_group].filter(Boolean))].join(", "))}</span><span class="muted">${(x.equipment || []).map(esc).join(", ") || "Bodyweight"}</span><span class="ex-badges">${badges}</span>${extra}</${tag}>`;
+  return `<${tag} class="ex-tile" ${href ? `href="${href}"` : ""} ${attrs}>${media}<b>${esc(x.name)}</b>${extra}</${tag}>`;
 }
 
 async function trainerLibrary() {
   const all = await myLibrary();
   const urls = await signedMap(all);
-  const have = new Set(all.map((x) => x.name.toLowerCase())); const missing = STARTER.filter((x) => !have.has(x.name.toLowerCase()));
   all.filter((x) => !x.category).forEach((x) => sb.from("exercises").update({ category: catOf(x) }).eq("id", x.id).then(() => {}));
   render(`<div class="row between"><h1>Exercises</h1><button class="small" onclick="location.hash='#/exercise/new'">${ICON.plus} Add exercise</button></div>
-    <p class="muted">Every move with its demo, muscles, category, level, equipment and how-to. Tap one to edit it, paste a YouTube link, or upload your own video. Filter by "Good for" to find low-impact, seated or balance options for clients with different needs.</p>
-    ${missing.length ? `<div class="card row between" style="gap:12px"><div><b>${missing.length} more starter ${missing.length === 1 ? "exercise" : "exercises"} available</b><div class="muted">Animated demos, instructions and cues included</div></div><button class="small" id="addStarter">Add</button></div>` : ""}
-    ${filterBar("lf", all)}
+    <p class="muted">Your exercise library. Add each exercise once with its demo, muscles and how-to, then pick from it whenever you build a programme. Tap one to edit it.</p>
+    ${all.length ? filterBar("lf", all) : ""}
     <p class="muted" id="lcount" style="margin:8px 0"></p>
     <div class="ex-grid" id="list"></div>
-    <button class="block" style="margin-top:16px" onclick="location.hash='#/wb/new'">${ICON.plus} Create a workout</button>`);
+    ${all.length ? `<button class="block" style="margin-top:16px" onclick="location.hash='#/wb/new'">${ICON.plus} Build a programme</button>` : ""}`);
   const draw = (f) => {
+    if (!all.length) { $("#lcount").textContent = ""; $("#list").innerHTML = `<div class="card empty" style="grid-column:1/-1"><h3 style="margin-top:0">Your library is empty</h3>
+      <p class="muted">Add your first exercise: give it a name, choose an animation or paste a video link, and set the muscles, equipment and how-to.</p>
+      <button onclick="location.hash='#/exercise/new'">${ICON.plus} Add your first exercise</button></div>`; return; }
     const rows = all.filter((x) => exMatch(x, f));
     $("#lcount").textContent = `Showing ${rows.length} of ${all.length}`;
-    $("#list").innerHTML = rows.map((x) => exCard(x, { urls, href: `#/exercise/${x.id}`,
-      extra: `${x.reward_streak ? `<span class="chip good">Bonus ${x.reward_streak}d</span>` : ""}${!x.video_path && !x.video_url && !moveFor(x) ? `<span class="chip warn">Add a video link</span>` : ""}` })).join("")
+    $("#list").innerHTML = rows.map((x) => exCard(x, { urls, href: `#/exercise/${x.id}` })).join("")
       || `<div class="empty" style="grid-column:1/-1">No exercises match. Clear a filter or add your own.</div>`;
     startMoves($("#list"));
   };
-  const get = bindFilter("lf", draw); draw(get());
-  $("#addStarter")?.addEventListener("click", async (e) => {
-    const btn = e.currentTarget; btn.disabled = true; btn.textContent = "Adding…";
-    const { error } = await sb.from("exercises").insert(missing.map(starterRow));
-    if (!fail(error)) { toast(`${missing.length} exercises added`); trainerLibrary(); } else { btn.disabled = false; btn.textContent = "Try again"; }
-  });
+  const get = all.length ? bindFilter("lf", draw) : () => ({}); draw(get());
 }
 
 // Pick exercises with their animations playing. multi: keep adding until Done.
@@ -2658,9 +2674,10 @@ async function exerciseEditor(id) {
     if (!row.muscles.length) { row.muscles = null; row.muscles2 = row.muscles2.length ? row.muscles2 : null; }
     if (row.muscles2 && !row.muscles2.length) row.muscles2 = null;
     if (f.vu.value.trim() && !row.video_url) { btn.disabled = false; return toast("That video link doesn't look right. Copy it from the Share button."); }
-    const { error } = isNew ? await sb.from("exercises").insert(row) : await sb.from("exercises").update(row).eq("id", id);
+    const { data: savedEx, error } = isNew ? await sb.from("exercises").insert(row).select().single() : await sb.from("exercises").update(row).eq("id", id).select().single();
     btn.disabled = false; btn.textContent = "Save to library";
-    if (!fail(error)) { toast("Saved to library"); go("library"); }
+    if (fail(error)) return;
+    toast("Saved to library"); go("library");
   };
 }
 
@@ -2697,13 +2714,13 @@ function folderOptions(folders, selected = "", clients = []) {
 // Master workouts live in the General library or the coach's own folders. Every client has an automatic folder:
 // their own workouts. Copies are independent: changing one never changes the master or anyone else's copy.
 function sheetPick(title, options, onPick, note = "") {
-  document.body.insertAdjacentHTML("beforeend", `<div class="picker" id="sheet" role="dialog" aria-label="${esc(title)}"><div class="picker-box">
+  document.body.insertAdjacentHTML("beforeend", `<div class="picker" id="pickSheet" role="dialog" aria-label="${esc(title)}"><div class="picker-box">
     <div class="row between"><h2 style="margin:0">${esc(title)}</h2><button type="button" class="small" id="shX">Close</button></div>
     ${note ? `<p class="muted">${esc(note)}</p>` : ""}
     ${options.map((o) => `<button type="button" class="list-item sl-item" data-v="${esc(o.value)}"><div class="grow"><b>${esc(o.label)}</b>${o.sub ? `<div class="muted">${esc(o.sub)}</div>` : ""}</div></button>`).join("") || `<div class="empty">Nothing to choose yet.</div>`}</div></div>`);
-  const close = () => $("#sheet")?.remove();
-  $("#shX").onclick = close; $("#sheet").addEventListener("click", (e) => { if (e.target.id === "sheet") close(); });
-  $$("#sheet [data-v]").forEach((b) => (b.onclick = () => { close(); onPick(b.dataset.v); }));
+  const close = () => $("#pickSheet")?.remove();
+  $("#shX").onclick = close; $("#pickSheet").addEventListener("click", (e) => { if (e.target.id === "pickSheet") close(); });
+  $$("#pickSheet [data-v]").forEach((b) => (b.onclick = () => { close(); onPick(b.dataset.v); }));
 }
 const SORTS = [["name", "Name A–Z"], ["new", "Newest first"], ["edited", "Recently edited"]];
 const sortBy = (list, k) => [...list].sort(k === "name" ? (a, b) => a.name.localeCompare(b.name) : k === "new" ? (a, b) => (b.created_at || "").localeCompare(a.created_at || "")

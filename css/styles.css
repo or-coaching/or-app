@@ -708,3 +708,21 @@ details.qa form { margin-top: 6px; }
 .m-views { display: inline-flex; gap: 6px; margin-left: auto; } .m-views[hidden] { display: none; }
 .m-views button.on { background: #9CB59A; color: #141815; border-color: #9CB59A; }
 .vars { margin-top: 10px; } .vars .tips { margin-top: 4px; }
+
+/* groups, chat reactions (v22) */
+.groups-bar { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; margin-bottom: 8px; -webkit-overflow-scrolling: touch; }
+.groups-bar .chip { white-space: nowrap; text-decoration: none; flex: none; }
+.chip.client { border-style: dashed; }
+.chip.add { background: transparent; border-style: dashed; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+.chip.add svg { width: 14px; height: 14px; }
+.group-head { margin-bottom: 10px; }
+.fgroup select { width: 100%; margin-bottom: 6px; }
+.bubble { position: relative; }
+.bubble .rx { position: absolute; bottom: -12px; right: 8px; display: flex; gap: 2px; background: #232a25; border: 1px solid #3a443d; border-radius: 999px; padding: 1px 6px; font-size: .9rem; line-height: 1.4; }
+.bubble.them .rx { right: auto; left: 8px; }
+.bubble .rx .mine { filter: drop-shadow(0 0 2px rgba(156,181,154,.8)); }
+.bubble:has(.rx) { margin-bottom: 18px; }
+.rx-bar { position: absolute; bottom: calc(100% + 6px); right: 0; display: flex; gap: 2px; background: #1B1F1C; border: 1px solid #3a443d; border-radius: 999px; padding: 4px 6px; box-shadow: 0 6px 18px rgba(0,0,0,.4); z-index: 5; }
+.bubble.them .rx-bar { right: auto; left: 0; }
+.rx-bar button { background: transparent; border: 0; font-size: 1.35rem; line-height: 1; padding: 4px; border-radius: 50%; min-width: 38px; min-height: 38px; cursor: pointer; }
+.rx-bar button.on { background: rgba(156,181,154,.25); }

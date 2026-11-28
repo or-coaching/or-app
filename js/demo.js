@@ -36,7 +36,7 @@ function seed() {
     ],
     exercises: [], workouts: [], workout_items: [], set_logs: [], activities: [], body_metrics: [],
     food_logs: [], custom_foods: [], messages: [], challenge_completions: [], checkins: [], progress_photos: [],
-    health_screens: [], coach_notes: [], workout_templates: [], water_logs: [], item_notes: [], workout_folders: [],
+    health_screens: [], coach_notes: [], workout_templates: [], water_logs: [], item_notes: [], workout_folders: [], exercise_groups: [], exercise_group_members: [], message_reactions: [],
   };
   const ex = (name, muscle_group, equipment, cues, instructions) => { const e = { id: uid(), trainer_id: TRAINER, name, muscle_group, equipment, cues, instructions, video_path: null, categories: [], created_at: at(-60) }; db.exercises.push(e); return e; };
   const squat = ex("Goblet squat", "Legs", ["Kettlebell"], ["Chest up, elbows inside knees", "Sit between your heels", "Drive through the middle of your foot", "Breathe out as you stand"], "Hold the bell at your chest. Feet just wider than hips, toes slightly out.");
